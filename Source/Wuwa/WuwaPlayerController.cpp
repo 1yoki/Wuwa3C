@@ -128,20 +128,13 @@ void AWuwaPlayerController::SetupInputComponent()
 		this,
 		&AWuwaPlayerController::Input_JumpReleased);
 
-	// 冲刺按住/松开
+	// Sprint 只在按下边沿生成一次命令。
 	EnhancedInputComponent->BindAction(
 		InputConfig->SprintAction,
 		ETriggerEvent::Started,
 		this,
 		&AWuwaPlayerController::Input_SprintPressed);
 
-	EnhancedInputComponent->BindAction(
-		InputConfig->SprintAction,
-		ETriggerEvent::Completed,
-		this,
-		&AWuwaPlayerController::Input_SprintReleased);
-
-	// 单次动作意图
 	EnhancedInputComponent->BindAction(
 		InputConfig->DodgeAction,
 		ETriggerEvent::Started,
@@ -206,12 +199,7 @@ void AWuwaPlayerController::Input_JumpReleased()
 
 void AWuwaPlayerController::Input_SprintPressed()
 {
-	InputIntent.bSprintHeld = true;
-}
-
-void AWuwaPlayerController::Input_SprintReleased()
-{
-	InputIntent.bSprintHeld = false;
+	InputIntent.bSprintPressed = true;
 }
 
 void AWuwaPlayerController::Input_DodgePressed()
@@ -248,8 +236,7 @@ void AWuwaPlayerController::PostProcessInput(const float DeltaTime, const bool b
 
 void AWuwaPlayerController::ProcessInputIntent()
 {
-	AWuwaCharacter *ControlledCharacter =
-		Cast<AWuwaCharacter>(GetPawn());
+	AWuwaCharacter *ControlledCharacter = Cast<AWuwaCharacter>(GetPawn());
 
 	if (!ControlledCharacter)
 	{
@@ -257,13 +244,16 @@ void AWuwaPlayerController::ProcessInputIntent()
 		return;
 	}
 
-	ControlledCharacter->DoMove(
-		InputIntent.MoveIntent.X,
-		InputIntent.MoveIntent.Y);
+	// 每帧提交持续输入快照。
+	ControlledCharacter->SetLocomotionIntent(InputIntent.MoveIntent);
 
-	ControlledCharacter->DoLook(
-		InputIntent.LookIntent.X,
-		InputIntent.LookIntent.Y);
+	if (InputIntent.bSprintPressed)
+	{
+		// Day 4/5 再按空中和地面上下文执行动作。
+		UE_LOG(LogWuwa, Display, TEXT("Input Intent: Sprint Pressed"));
+	}
+
+	ControlledCharacter->DoLook(InputIntent.LookIntent.X, InputIntent.LookIntent.Y);
 
 	if (InputIntent.bJumpPressed)
 	{
@@ -305,6 +295,6 @@ void AWuwaPlayerController::ProcessInputIntent()
 			InputIntent.SwitchTargetAxis);
 	}
 
-	// 清理单帧输入，保留 MoveIntent 和 bSprintHeld
+	// 清理单帧输入，保留 MoveIntent。
 	InputIntent.ResetTransientInputs();
 }

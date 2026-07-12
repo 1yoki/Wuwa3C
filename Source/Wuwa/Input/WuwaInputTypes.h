@@ -13,7 +13,7 @@ struct WUWA_API FWuwaInputIntent
 
     bool bJumpPressed = false;
     bool bJumpReleased = false;
-    bool bSprintHeld = false;
+    bool bSprintPressed = false;
 
     bool bDodgePressed = false;
     bool bAttackPressed = false;
@@ -28,6 +28,7 @@ struct WUWA_API FWuwaInputIntent
 
         bJumpPressed = false;
         bJumpReleased = false;
+        bSprintPressed = false;
         bDodgePressed = false;
         bAttackPressed = false;
         bGrapplePressed = false;

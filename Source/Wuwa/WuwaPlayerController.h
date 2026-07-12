@@ -37,7 +37,6 @@ protected:
 	void Input_JumpReleased();
 
 	void Input_SprintPressed();
-	void Input_SprintReleased();
 
 	void Input_DodgePressed();
 	void Input_AttackPressed();
