@@ -16,6 +16,9 @@ public:
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
     TObjectPtr<UInputMappingContext> GameplayMappingContext;
 
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input|Buffer", meta = (ClampMin = "0.0", Units = "s"))
+    float DefaultCommandValidDuration = 0.15f;
+
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
     TObjectPtr<UInputAction> MoveAction;
 

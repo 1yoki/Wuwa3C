@@ -9,6 +9,9 @@
 #include "InputActionValue.h"
 #include "Input/WuwaInputConfig.h"
 
+#include "Core/WuwaGameplayTags.h"
+#include "Engine/World.h"
+
 #include "Blueprint/UserWidget.h"
 #include "Wuwa.h"
 #include "Widgets/Input/SVirtualJoystick.h"
@@ -161,7 +164,7 @@ void AWuwaPlayerController::SetupInputComponent()
 
 	EnhancedInputComponent->BindAction(
 		InputConfig->SwitchTargetAction,
-		ETriggerEvent::Triggered,
+		ETriggerEvent::Started,
 		this,
 		&AWuwaPlayerController::Input_SwitchTarget);
 }
@@ -244,18 +247,22 @@ void AWuwaPlayerController::ProcessInputIntent()
 		return;
 	}
 
-	// 每帧提交持续输入快照。
+	// 先冻结本帧离散输入，再执行旧 Gameplay 门面。
+	SubmitTransientInputCommands(*ControlledCharacter);
+
+	// 每帧持续提交移动输入快照。
 	ControlledCharacter->SetLocomotionIntent(InputIntent.MoveIntent);
 
+	bool bAirSprintConsumed = false;
 	if (InputIntent.bSprintPressed)
 	{
-		// Day 4/5 再按空中和地面上下文执行动作。
-		UE_LOG(LogWuwa, Display, TEXT("Input Intent: Sprint Pressed"));
+		// 地面 Sprint 当前不会被消费，留给 Day 5。
+		bAirSprintConsumed = ControlledCharacter->DoSprintPressed();
 	}
 
 	ControlledCharacter->DoLook(InputIntent.LookIntent.X, InputIntent.LookIntent.Y);
 
-	if (InputIntent.bJumpPressed)
+	if (InputIntent.bJumpPressed && !bAirSprintConsumed)
 	{
 		ControlledCharacter->DoJumpStart();
 	}
@@ -265,36 +272,106 @@ void AWuwaPlayerController::ProcessInputIntent()
 		ControlledCharacter->DoJumpEnd();
 	}
 
-	// 暂时只验证这些输入意图
+	// 清理单帧输入，保留 MoveIntent。
+	InputIntent.ResetTransientInputs();
+}
+
+double AWuwaPlayerController::GetInputCommandTime() const
+{
+	const UWorld *World = GetWorld();
+
+	return World ? static_cast<double>(World->GetTimeSeconds()) : 0.0;
+}
+
+// 实现Command工厂
+FWuwaInputCommand AWuwaPlayerController::BuildInputCommand(const FGameplayTag &InputTag, const FVector2D &Direction)
+{
+	FWuwaInputCommand Command;
+
+	Command.InputTag = InputTag;
+	Command.PressedAt = GetInputCommandTime();
+
+	// 有效时间由InputConfig配置，允许在蓝图中调整
+	Command.ValidDuration = InputConfig ? InputConfig->DefaultCommandValidDuration : 0.f;
+
+	// 对角输入归一化到最大长度1
+	Command.Direction = Direction.GetClampedToMaxSize(1.f);
+
+	Command.Sequence = NextInputCommandSequence++;
+
+	return Command;
+}
+
+// 实现单条命令提交
+bool AWuwaPlayerController::SubmitSemanticInputCommand(AWuwaCharacter &ControlledCharacter, const FGameplayTag &InputTag, const FVector2D &Direction)
+{
+	const FWuwaInputCommand Command = BuildInputCommand(InputTag, Direction);
+
+	if (!Command.IsValid())
+	{
+		UE_LOG(
+			LogWuwa,
+			Warning,
+			TEXT("Invalid Input Command: Tag=%s"),
+			*InputTag.ToString());
+
+		return false;
+	}
+
+	const bool bSubmitted = ControlledCharacter.SubmitInputCommand(Command);
+
+	if (bSubmitted)
+	{
+		// 显示 Command 的关键快照
+		UE_LOG(LogWuwa, Display, TEXT("Input Command Submitted: Tag=%s, Seq=%u, Dir=(%.2f, %.2f)"),
+			   *Command.InputTag.ToString(),
+			   Command.Sequence,
+			   Command.Direction.X,
+			   Command.Direction.Y);
+	}
+
+	return bSubmitted;
+}
+
+// 将本帧边沿转换为Command并提交给角色
+void AWuwaPlayerController::SubmitTransientInputCommands(AWuwaCharacter &ControlledCharacter)
+{
+	// 所有普通动作都快照本帧WASD输入方向，便于后续动作使用。
+	const FVector2D MoveDirection = InputIntent.MoveIntent;
+
+	if (InputIntent.bSprintPressed)
+	{
+		SubmitSemanticInputCommand(ControlledCharacter, WuwaGameplayTags::Input_Sprint, MoveDirection);
+	}
+
+	if (InputIntent.bJumpPressed)
+	{
+		SubmitSemanticInputCommand(ControlledCharacter, WuwaGameplayTags::Input_Jump, MoveDirection);
+	}
+
 	if (InputIntent.bDodgePressed)
 	{
-		UE_LOG(LogWuwa, Display, TEXT("Input Intent: Dodge"));
+		SubmitSemanticInputCommand(ControlledCharacter, WuwaGameplayTags::Input_Dodge, MoveDirection);
 	}
 
 	if (InputIntent.bAttackPressed)
 	{
-		UE_LOG(LogWuwa, Display, TEXT("Input Intent: Attack"));
+		SubmitSemanticInputCommand(ControlledCharacter, WuwaGameplayTags::Input_Attack, MoveDirection);
 	}
 
 	if (InputIntent.bGrapplePressed)
 	{
-		UE_LOG(LogWuwa, Display, TEXT("Input Intent: Grapple"));
+		SubmitSemanticInputCommand(ControlledCharacter, WuwaGameplayTags::Input_Grapple, MoveDirection);
 	}
 
 	if (InputIntent.bLockTargetPressed)
 	{
-		UE_LOG(LogWuwa, Display, TEXT("Input Intent: Lock Target"));
+		SubmitSemanticInputCommand(ControlledCharacter, WuwaGameplayTags::Input_LockTarget, MoveDirection);
 	}
 
 	if (!FMath::IsNearlyZero(InputIntent.SwitchTargetAxis))
 	{
-		UE_LOG(
-			LogWuwa,
-			Display,
-			TEXT("Input Intent: Switch Target, Axis=%.2f"),
-			InputIntent.SwitchTargetAxis);
+		const FVector2D SwitchDirection(InputIntent.SwitchTargetAxis, 0.f);
+		SubmitSemanticInputCommand(ControlledCharacter, WuwaGameplayTags::Input_SwitchTarget, SwitchDirection);
 	}
-
-	// 清理单帧输入，保留 MoveIntent。
-	InputIntent.ResetTransientInputs();
 }

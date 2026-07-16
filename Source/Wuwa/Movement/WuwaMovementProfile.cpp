@@ -44,6 +44,27 @@ EDataValidationResult UWuwaMovementProfile::IsDataValid(FDataValidationContext &
 
     Check(AnalogRunThreshold >= 0.f && AnalogRunThreshold <= 1.f, TEXT("AnalogRunThreshold 必须在 [0, 1] 范围内"));
 
+    // 普通跳跃必须提供有效的向上速度。
+    Check(JumpZVelocity > 0.f, TEXT("JumpZVelocity 必须大于 0"));
+
+    // 二段跳必须提供有效的向上速度。
+    Check(DoubleJumpZVelocity > 0.f, TEXT("DoubleJumpZVelocity 必须大于 0"));
+
+    // 水平推进速度允许为零，但不能为负数。
+    Check(DoubleJumpForwardSpeed >= 0.f, TEXT("DoubleJumpForwardSpeed 不能为负数"));
+
+    // 至少需要允许一次普通跳跃。
+    Check(MaxJumpCount >= 1, TEXT("MaxJumpCount 必须大于等于 1"));
+
+    // 零表示关闭土狼时间。
+    Check(CoyoteTime >= 0.f, TEXT("CoyoteTime 不能为负数"));
+
+    // 零表示关闭跳跃缓存。
+    Check(JumpBufferTime >= 0.f, TEXT("JumpBufferTime 不能为负数"));
+
+    // 重力倍率必须保持为正数。
+    Check(GravityScale > 0.f, TEXT("GravityScale 必须大于 0"));
+
     return Result;
 }
 

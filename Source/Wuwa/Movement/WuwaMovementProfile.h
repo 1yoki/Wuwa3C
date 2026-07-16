@@ -46,7 +46,35 @@ public:
 
     // 空中控制能力，0 表示完全无法控制，1 表示完全可控。
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Air", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-    float AirControl = 0.4f;
+    float AirControl = 0.2f;
+
+    // 普通跳跃的初始向上速度。
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Jump", meta = (ClampMin = "0.0", Units = "cm/s"))
+    float JumpZVelocity = 500.f;
+
+    // 配置空中二段跳的初始向上速度。
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Jump", meta = (ClampMin = "0.0", Units = "cm/s"))
+    float DoubleJumpZVelocity = 650.f;
+
+    // 配置空中二段跳的水平推进速度。
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Jump", meta = (ClampMin = "0.0", Units = "cm/s"))
+    float DoubleJumpForwardSpeed = 400.f;
+
+    // 限制每次滞空允许执行的跳跃次数。
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Jump", meta = (ClampMin = "1", UIMax = "5"))
+    int32 MaxJumpCount = 2;
+
+    // 允许角色离开边缘后短时间内继续起跳。
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Jump", meta = (ClampMin = "0.0", Units = "s"))
+    float CoyoteTime = 0.15f;
+
+    // 允许落地前输入的跳跃请求短暂保留。
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Jump", meta = (ClampMin = "0.0", Units = "s"))
+    float JumpBufferTime = 0.10f;
+
+    // 配置普通跳跃和空中移动使用的重力倍率。
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Air", meta = (ClampMin = "0.1", UIMax = "3.0"))
+    float GravityScale = 1.f;
 
     // 输入量达到该值后由走路切换为跑步
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Input", meta = (ClampMin = "0.0", ClampMax = "1.0"))
