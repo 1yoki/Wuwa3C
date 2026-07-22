@@ -185,4 +185,24 @@ private:
 
     // 释放指定动作取得的全部标签句柄
     void ReleaseGrantedTagHandles(TArray<FWuwaStateTagHandle> &Handles);
+
+    // 每个 ActionTag 独立保存冷却截止时间，Definition 资产本身不保存运行态
+    UPROPERTY(Transient)
+    TMap<FGameplayTag, double> CooldownExpireAtByAction;
+
+    // 当前 FIFO 队首因冷却等待时使用的一次性重试 Timer
+    FTimerHandle CooldownBufferRetryTimerHandle;
+
+    bool IsActionOnCooldown(const FGameplayTag &ActionTag, double CurrentTime) const;
+
+    double GetActionCooldownExpireAt(const FGameplayTag &ActionTag) const;
+
+    // 只有 Executor 成功启动后才能提交冷却
+    void CommitActionCooldown(const UWuwaActionDefinition &Definition);
+
+    void ScheduleCooldownBufferRetry(const FWuwaInputCommand &Command, const FWuwaActionRequest &Request, double CurrentTime);
+
+    void ClearCooldownBufferRetry();
+
+    void HandleCooldownBufferRetry();
 };

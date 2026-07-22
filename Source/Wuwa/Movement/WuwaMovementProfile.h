@@ -23,6 +23,10 @@ public:
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|speed", meta = (ClampMin = "0.0", Units = "cm/s"))
     float SprintSpeed = 700.f;
 
+    // Dash 中段衔接后，水平速度向普通 RunSpeed 收敛的专用减速度。
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Sprint", meta = (ClampMin = "0.01", Units = "cm/s^2"))
+    float SprintRunDeceleration = 2000.f;
+
     // 加速度
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Acceleration", meta = (ClampMin = "0.0", Units = "cm/s^2"))
     float MaxAcceleration = 2200.f;
@@ -60,6 +64,14 @@ public:
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Jump", meta = (ClampMin = "0.0", Units = "cm/s"))
     float DoubleJumpForwardSpeed = 400.f;
 
+    // 后空翻的初始向上速度。
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Jump|Backflip", meta = (ClampMin = "0.01", Units = "cm/s"))
+    float BackflipZVelocity = 650.f;
+
+    // 后空翻的水平推进速度。
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Jump|Backflip", meta = (ClampMin = "0.01", Units = "cm/s"))
+    float BackflipBackwardSpeed = 400.f;
+
     // 限制每次滞空允许执行的跳跃次数。
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Jump", meta = (ClampMin = "1", UIMax = "5"))
     int32 MaxJumpCount = 2;
@@ -75,6 +87,10 @@ public:
     // 配置普通跳跃和空中移动使用的重力倍率。
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Air", meta = (ClampMin = "0.1", UIMax = "3.0"))
     float GravityScale = 1.f;
+
+    // 向下冲击速度达到该值时记为重落地。
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Landing", meta = (ClampMin = "0.01", Units = "cm/s"))
+    float HeavyLandingVelocityThreshold = 900.f;
 
     // 输入量达到该值后由走路切换为跑步
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement|Input", meta = (ClampMin = "0.0", ClampMax = "1.0"))

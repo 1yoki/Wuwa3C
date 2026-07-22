@@ -247,22 +247,18 @@ void AWuwaPlayerController::ProcessInputIntent()
 		return;
 	}
 
-	// 先冻结本帧离散输入，再执行旧 Gameplay 门面。
+	// 离散命令会同步进入 Router；Sprint 成功时会在本帧立即授予移动阻断标签。
 	SubmitTransientInputCommands(*ControlledCharacter);
 
-	// 每帧持续提交移动输入快照。
+	// Controller 始终保留真实 MoveIntent，Character 根据状态标签决定是否向下传递。
 	ControlledCharacter->SetLocomotionIntent(InputIntent.MoveIntent);
 
-	bool bAirSprintConsumed = false;
-	if (InputIntent.bSprintPressed)
-	{
-		// 地面 Sprint 当前不会被消费，留给 Day 5。
-		bAirSprintConsumed = ControlledCharacter->DoSprintPressed();
-	}
+	const bool bAirDoubleJumpActionActive = ControlledCharacter->IsAirDoubleJumpActionActive();
 
 	ControlledCharacter->DoLook(InputIntent.LookIntent.X, InputIntent.LookIntent.Y);
 
-	if (InputIntent.bJumpPressed && !bAirSprintConsumed)
+	// 防止 Sprint 与 Jump 同帧时，二段跳之后又写入一次普通跳跃缓存
+	if (InputIntent.bJumpPressed && !bAirDoubleJumpActionActive)
 	{
 		ControlledCharacter->DoJumpStart();
 	}

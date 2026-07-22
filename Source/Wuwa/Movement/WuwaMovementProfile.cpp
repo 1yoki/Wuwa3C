@@ -28,6 +28,8 @@ EDataValidationResult UWuwaMovementProfile::IsDataValid(FDataValidationContext &
 
     Check(SprintSpeed >= RunSpeed, TEXT("SprintSpeed 不能小于 RunSpeed"));
 
+    Check(SprintRunDeceleration > 0.f, TEXT("SprintRunDeceleration 必须大于 0"));
+
     Check(MaxAcceleration > 0.f, TEXT("MaxAcceleration 必须大于 0"));
 
     Check(BrakingDecelerationWalking > 0.f, TEXT("BrakingDecelerationWalking 必须大于 0"));
@@ -53,6 +55,10 @@ EDataValidationResult UWuwaMovementProfile::IsDataValid(FDataValidationContext &
     // 水平推进速度允许为零，但不能为负数。
     Check(DoubleJumpForwardSpeed >= 0.f, TEXT("DoubleJumpForwardSpeed 不能为负数"));
 
+    Check(BackflipZVelocity > 0.f, TEXT("BackflipZVelocity 必须大于 0"));
+
+    Check(BackflipBackwardSpeed > 0.f, TEXT("BackflipBackwardSpeed 必须大于 0"));
+
     // 至少需要允许一次普通跳跃。
     Check(MaxJumpCount >= 1, TEXT("MaxJumpCount 必须大于等于 1"));
 
@@ -64,6 +70,8 @@ EDataValidationResult UWuwaMovementProfile::IsDataValid(FDataValidationContext &
 
     // 重力倍率必须保持为正数。
     Check(GravityScale > 0.f, TEXT("GravityScale 必须大于 0"));
+
+    Check(HeavyLandingVelocityThreshold > 0.f, TEXT("HeavyLandingVelocityThreshold 必须大于 0"));
 
     return Result;
 }

@@ -5,14 +5,17 @@
 #include "Core/WuwaStateTagComponent.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Core/WuwaGameplayTags.h"
 
 #include "Input/WuwaInputBufferComponent.h"
 #include "Engine/World.h"
 
 #include "Movement/WuwaCharacterMovementComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Movement/WuwaMovementActionExecutorComponent.h"
 #include "Movement/WuwaMovementProfile.h"
 
+#include "Actions/WuwaCharacterActionSourceComponent.h"
 #include "Actions/WuwaActionRouterComponent.h"
 
 #include "GameFramework/SpringArmComponent.h"
@@ -33,6 +36,11 @@ AWuwaCharacter::AWuwaCharacter(const FObjectInitializer &ObjectInitializer) : Su
 
 	// Character 创建唯一 Action Router。
 	ActionRouterComponent = CreateDefaultSubobject<UWuwaActionRouterComponent>(TEXT("ActionRouterComponent"));
+
+	// Character 创建唯一 Action Source 控制组件。
+	ActionSourceComponent = CreateDefaultSubobject<UWuwaCharacterActionSourceComponent>(TEXT("ActionSourceComponent"));
+
+	MovementActionExecutorComponent = CreateDefaultSubobject<UWuwaMovementActionExecutorComponent>(TEXT("MovementActionExecutorComponent"));
 
 	// Set size for collision capsule
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
@@ -105,6 +113,31 @@ void AWuwaCharacter::BeginPlay()
 
 	// Profile 仅在初始化时应用。
 	Movement->ApplyMovementProfile(MovementProfile);
+
+	// 连接 Action Source 与同级组件
+	if (!ActionSourceComponent || !ActionSourceComponent->Initialize(this, Movement) ||
+		!ActionRouterComponent->SetActionSource(ActionSourceComponent))
+	{
+		UE_LOG(
+			LogWuwa,
+			Error,
+			TEXT("真实 Action Source 装配失败。Owner=%s"),
+			*GetNameSafe(this));
+
+		return;
+	}
+
+	// Character 显式装配并注册唯一的 Movement Executor。
+	if (!MovementActionExecutorComponent || !MovementActionExecutorComponent->Initialize(this, Movement, ActionRouterComponent) || !ActionRouterComponent->RegisterExecutor(MovementActionExecutorComponent))
+	{
+		UE_LOG(
+			LogWuwa,
+			Error,
+			TEXT("Movement Action Executor 装配失败。Owner=%s"),
+			*GetNameSafe(this));
+
+		return;
+	}
 }
 
 FWuwaLocomotionSnapshot AWuwaCharacter::GetLocomotionSnapshot() const
@@ -120,18 +153,32 @@ FWuwaLocomotionSnapshot AWuwaCharacter::GetLocomotionSnapshot() const
 	return Movement->GetLocomotionSnapshot();
 }
 
+bool AWuwaCharacter::IsMoveInputBlocked() const
+{
+	return IsValid(StateTagComponent.Get()) && StateTagComponent->HasTag(WuwaGameplayTags::Block_Input_Move, true);
+}
+
 void AWuwaCharacter::SetLocomotionIntent(const FVector2D &MoveIntent)
 {
-	// 保证对角输入量不超过 1。
-	const FVector2D ClampedIntent = MoveIntent.GetClampedToMaxSize(1.f);
+	// 先保存 Controller 的真实输入；Block.Input.Move 只能阻止向下传递，不能清除快照
+	CurrentMoveIntent = MoveIntent.GetClampedToMaxSize(1.f);
+
+	const bool bMoveBlocked = IsMoveInputBlocked();
+
+	const FVector2D EffectiveIntent = bMoveBlocked ? FVector2D::ZeroVector : CurrentMoveIntent;
 
 	if (UWuwaCharacterMovementComponent *Movement = GetWuwaMovementComponent())
 	{
 		// Movement Component 决定 Walk/Run 速度。
-		Movement->SetLocomotionIntent(ClampedIntent);
+		Movement->SetLocomotionIntent(EffectiveIntent);
 	}
 
-	DoMove(ClampedIntent.X, ClampedIntent.Y);
+	if (bMoveBlocked)
+	{
+		return;
+	}
+
+	DoMove(EffectiveIntent.X, EffectiveIntent.Y);
 }
 
 bool AWuwaCharacter::SubmitInputCommand(const FWuwaInputCommand &Command)
@@ -198,6 +245,12 @@ TArray<FWuwaInputCommand> AWuwaCharacter::GetBufferedInputCommands()
 
 void AWuwaCharacter::DoMove(float Right, float Forward)
 {
+	// 防止蓝图或其他调用方绕过 SetLocomotionIntent 直接注入移动。
+	if (IsMoveInputBlocked())
+	{
+		return;
+	}
+
 	// 将二维输入转换为相机朝向的世界移动。
 	if (GetController() != nullptr)
 	{
@@ -227,6 +280,21 @@ void AWuwaCharacter::DoLook(float Yaw, float Pitch)
 	}
 }
 
+bool AWuwaCharacter::IsAirDoubleJumpActionActive() const
+{
+	const UWuwaActionRouterComponent *Router = ActionRouterComponent.Get();
+
+	if (!IsValid(Router) || !Router->HasActiveAction())
+	{
+		return false;
+	}
+
+	const FGameplayTag ActiveActionTag = Router->GetCurrentActionTag();
+
+	return ActiveActionTag == WuwaGameplayTags::Action_Movement_DoubleJump_Directional ||
+		   ActiveActionTag == WuwaGameplayTags::Action_Movement_DoubleJump_Backflip;
+}
+
 void AWuwaCharacter::DoJumpStart()
 {
 	// signal the character to jump
@@ -241,19 +309,4 @@ void AWuwaCharacter::DoJumpEnd()
 {
 	// signal the character to stop jumping
 	StopJumping();
-}
-
-// 把当前帧的世界移动方向提交给空中二段跳。
-bool AWuwaCharacter::DoSprintPressed()
-{
-	UWuwaCharacterMovementComponent *Movement = GetWuwaMovementComponent();
-
-	if (!Movement)
-	{
-		return false;
-	}
-
-	// 使用当前帧积累的世界移动方向
-	const FVector DesiredWorldDirection = GetPendingMovementInputVector();
-	return Movement->RequestAirSprint(DesiredWorldDirection);
 }

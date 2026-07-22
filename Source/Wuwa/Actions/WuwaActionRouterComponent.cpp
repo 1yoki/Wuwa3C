@@ -2,6 +2,7 @@
 
 #include "Actions/WuwaActionSource.h"
 #include "Engine/World.h"
+#include "TimerManager.h"
 
 #include "Actions/WuwaActionDefinition.h"
 #include "Core/WuwaStateTagComponent.h"
@@ -239,7 +240,11 @@ void UWuwaActionRouterComponent::TryConsumeBuffer()
                 *UEnum::GetValueAsString(Result.RejectionReason),
                 Command.Sequence);
 
-            // FIFO 队首仍有效时不能跳过它。
+            if (Result.RejectionReason == EWuwaActionRejectionReason::Cooldown)
+            {
+                // Router 不启用 Tick，只为当前因冷却等待的队首命令设置一次性重试
+                ScheduleCooldownBufferRetry(Command, ActionRequest, CurrentTime);
+            }
             return;
         }
 
@@ -251,6 +256,58 @@ void UWuwaActionRouterComponent::TryConsumeBuffer()
             return;
         }
     }
+}
+
+void UWuwaActionRouterComponent::ScheduleCooldownBufferRetry(const FWuwaInputCommand &Command,
+                                                             const FWuwaActionRequest &Request,
+                                                             const double CurrentTime)
+{
+    const UWuwaActionDefinition *Definition = Request.Definition.Get();
+
+    UWorld *World = GetWorld();
+
+    if (!IsValid(Definition) || !IsValid(World) || Definition->BufferTime <= 0.f)
+    {
+        return;
+    }
+
+    const double CooldownExpireAt = GetActionCooldownExpireAt(Request.ActionTag);
+
+    const double DefinitionExpireAt = Command.PressedAt + static_cast<double>(Definition->BufferTime);
+
+    // 命令自身有效期和 Definition BufferTime 任一先到，都必须停止等待
+    const double EffectiveCommandExpireAt = FMath::Min(Command.GetExpireAt(), DefinitionExpireAt);
+
+    const double RetryAt = FMath::Min(CooldownExpireAt, EffectiveCommandExpireAt);
+
+    constexpr double MinimumRetryDelay = 0.001;
+
+    const float RetryDelay = static_cast<float>(FMath::Max(RetryAt - GetActionTime(), MinimumRetryDelay));
+
+    World->GetTimerManager().SetTimer(
+        CooldownBufferRetryTimerHandle,
+        this,
+        &UWuwaActionRouterComponent::HandleCooldownBufferRetry,
+        RetryDelay,
+        false);
+}
+
+void UWuwaActionRouterComponent::ClearCooldownBufferRetry()
+{
+    if (UWorld *World = GetWorld())
+    {
+        World->GetTimerManager().ClearTimer(CooldownBufferRetryTimerHandle);
+    }
+
+    CooldownBufferRetryTimerHandle.Invalidate();
+}
+
+void UWuwaActionRouterComponent::HandleCooldownBufferRetry()
+{
+    CooldownBufferRetryTimerHandle.Invalidate();
+
+    // Timer 只重新驱动 Router；仍由 FIFO 和 CanStart 决定启动或过期
+    TryConsumeBuffer();
 }
 
 bool UWuwaActionRouterComponent::RegisterExecutor(UObject *ExecutorObject)
@@ -461,17 +518,35 @@ bool UWuwaActionRouterComponent::CanStart(const FWuwaActionRequest &Request, EWu
         return false;
     }
 
-    EWuwaActionRejectionReason ExecutorReason = EWuwaActionRejectionReason::None;
-
-    // Executor 只检查自己拥有的冷却、资源和移动条件
-    if (!Executor->CanStartAction(Request, ExecutorReason))
+    // 当前动作冲突必须先返回 Priority/CancellationRule，
+    // 不能被 Executor 的“已有运行资源”误报为 InvalidContext
+    if (!CanInterruptCurrent(Request, OutReason))
     {
-        OutReason = ExecutorReason == EWuwaActionRejectionReason::None ? EWuwaActionRejectionReason::InvalidContext : ExecutorReason;
         return false;
     }
 
-    // 静态准入通过后再判断当前动作仲裁
-    return CanInterruptCurrent(Request, OutReason);
+    EWuwaActionRejectionReason ExecutorReason = EWuwaActionRejectionReason::None;
+
+    // Executor 检查真实 MovementMode、Context 和自身资源
+    if (!Executor->CanStartAction(Request, ExecutorReason))
+    {
+        OutReason = ExecutorReason == EWuwaActionRejectionReason::None
+                        ? EWuwaActionRejectionReason::InvalidContext
+                        : ExecutorReason;
+
+        return false;
+    }
+
+    // Context 有效且没有动作冲突后，再检查同 ActionTag 的通用冷却
+    if (IsActionOnCooldown(Request.ActionTag, GetActionTime()))
+    {
+        OutReason =
+            EWuwaActionRejectionReason::Cooldown;
+
+        return false;
+    }
+
+    return true;
 }
 
 // 提交动作请求并返回结构化结果
@@ -625,6 +700,9 @@ bool UWuwaActionRouterComponent::StartApprovedAction(const FWuwaActionRequest &R
         return false;
     }
 
+    // 只有表现和 Gameplay 位移都成功启动后，才正式提交本次冷却
+    CommitActionCooldown(*Definition);
+
     return true;
 }
 
@@ -691,6 +769,35 @@ bool UWuwaActionRouterComponent::FinishCurrentInternal(const EWuwaActionEndReaso
     return true;
 }
 
+bool UWuwaActionRouterComponent::IsActionOnCooldown(const FGameplayTag &ActionTag, const double CurrentTime) const
+{
+    const double *ExpireAt = CooldownExpireAtByAction.Find(ActionTag);
+
+    return ExpireAt != nullptr && CurrentTime < *ExpireAt;
+}
+
+double UWuwaActionRouterComponent::GetActionCooldownExpireAt(const FGameplayTag &ActionTag) const
+{
+    const double *ExpireAt = CooldownExpireAtByAction.Find(ActionTag);
+
+    return ExpireAt != nullptr ? *ExpireAt : 0.0;
+}
+
+void UWuwaActionRouterComponent::CommitActionCooldown(const UWuwaActionDefinition &Definition)
+{
+    if (Definition.CooldownDuration <= 0.f)
+    {
+        return;
+    }
+
+    // 冷却从 Executor 成功启动的时刻开始，失败启动不能污染冷却运行态
+    const double NewExpireAt = GetActionTime() + static_cast<double>(Definition.CooldownDuration);
+
+    double &StoredExpireAt = CooldownExpireAtByAction.FindOrAdd(Definition.ActionTag);
+
+    StoredExpireAt = FMath::Max(StoredExpireAt, NewExpireAt);
+}
+
 void UWuwaActionRouterComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
     if (HasActiveAction())
@@ -698,6 +805,10 @@ void UWuwaActionRouterComponent::EndPlay(const EEndPlayReason::Type EndPlayReaso
         // Owner 销毁时强制结束当前动作，避免残留标签污染后续运行。
         FinishCurrentInternal(EWuwaActionEndReason::OwnerDestroyed);
     }
+
+    // Timer 不能在 Router 销毁后再次尝试消费 FIFO
+    ClearCooldownBufferRetry();
+    CooldownExpireAtByAction.Reset();
 
     // 清理完成后再释放组件引用
     RegisteredExecutors.Reset();

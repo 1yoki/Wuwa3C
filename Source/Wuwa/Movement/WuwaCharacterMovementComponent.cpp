@@ -7,6 +7,12 @@
 #include "Engine/World.h"
 #include "Wuwa.h"
 
+namespace
+{
+    // 避免浮点抖动让 Sprint Run 在 RunSpeed 附近多停留一帧。
+    constexpr float SprintRunExitSpeedTolerance = 5.f;
+}
+
 UWuwaCharacterMovementComponent::UWuwaCharacterMovementComponent()
 {
     MaxWalkSpeed = ConfiguredRunSpeed;
@@ -135,37 +141,69 @@ bool UWuwaCharacterMovementComponent::StartJump(const float InitialZVelocity, co
     return true;
 }
 
-bool UWuwaCharacterMovementComponent::RequestAirSprint(const FVector &DesiredWorldDirection)
+bool UWuwaCharacterMovementComponent::CanPerformAirDoubleJump() const
 {
-    if (!CharacterOwner || !HasValidData() || !IsFalling() ||
-        AirActionState.bAirSprintConsumed || AirActionState.JumpCount >= ConfiguredMaxJumpCount)
+    return IsValid(CharacterOwner) && HasValidData() && IsFalling() && !AirActionState.bAirSprintConsumed && AirActionState.JumpCount < ConfiguredMaxJumpCount;
+}
+
+bool UWuwaCharacterMovementComponent::CommitAirDoubleJump(const FVector &WorldDirection, const float HorizontalSpeed, const float VerticalSpeed, const EWuwaJumpType JumpType)
+{
+    // 在修改任何运行态前完成全部准入校验，
+    if (!CanPerformAirDoubleJump() || WorldDirection.ContainsNaN() ||
+        HorizontalSpeed < 0.f || VerticalSpeed <= 0.f ||
+        !FMath::IsFinite(HorizontalSpeed) || !FMath::IsFinite(VerticalSpeed))
     {
         return false;
     }
 
-    FVector JumpDirection = DesiredWorldDirection.GetSafeNormal2D();
-
-    if (JumpDirection.IsNearlyZero())
+    // 限定空中二段跳类型
+    if (JumpType != EWuwaJumpType::AirSprint && JumpType != EWuwaJumpType::AirBackflip)
     {
-        // 没有输入时使用角色朝向
-        JumpDirection = CharacterOwner->GetActorForwardVector().GetSafeNormal2D();
+        return false;
     }
 
-    // 覆盖当前速度的水平分量
-    Velocity.X = JumpDirection.X * ConfiguredDoubleJumpForwardSpeed;
-    Velocity.Y = JumpDirection.Y * ConfiguredDoubleJumpForwardSpeed;
-    Velocity.Z = ConfiguredDoubleJumpZVelocity;
+    const FVector HorizontalDirection = WorldDirection.GetSafeNormal2D();
+
+    if (HorizontalDirection.IsNearlyZero())
+    {
+        return false;
+    }
+
+    // 使用局部副本计算完整结果
+    FVector NewVelocity = Velocity;
+
+    NewVelocity.X = HorizontalDirection.X * HorizontalSpeed;
+    NewVelocity.Y = HorizontalDirection.Y * HorizontalSpeed;
+    NewVelocity.Z = VerticalSpeed;
+
+    // 执行原子提交，速度、预算和表现事件必须保持一致
+    Velocity = NewVelocity;
 
     AirActionState.bAirSprintConsumed = true;
     AirActionState.BufferedJumpExpireAt = -1.0;
     ++AirActionState.JumpCount;
 
-    LastJumpType = EWuwaJumpType::AirSprint;
+    // 防止落地缓存标记在空中二段跳后继续触发
+    bPendingBufferedJump = false;
+
+    LastJumpType = JumpType;
     ++JumpSequence;
 
-    UE_LOG(LogWuwa, Verbose, TEXT("空中冲刺起跳。 Count=%d"), AirActionState.JumpCount);
+    UE_LOG(LogWuwa, Verbose, TEXT("空中二段跳物理提交。Type=%d Count=%d"), static_cast<int32>(JumpType), AirActionState.JumpCount);
 
     return true;
+}
+
+bool UWuwaCharacterMovementComponent::RequestDirectionalDoubleJump(const FVector &ForwardDirectionSnapshot)
+{
+    // Directional 的方向已经由 Action Source 冻结为角色朝向
+    return CommitAirDoubleJump(ForwardDirectionSnapshot, ConfiguredDoubleJumpForwardSpeed, ConfiguredDoubleJumpZVelocity, EWuwaJumpType::AirSprint);
+}
+
+bool UWuwaCharacterMovementComponent::RequestBackflipDoubleJump(const FVector &BackwardDirectionSnapshot)
+{
+    // Backflip 的方向已经由 Action Source 冻结为角色背向
+    return CommitAirDoubleJump(BackwardDirectionSnapshot, ConfiguredBackflipBackwardSpeed, ConfiguredBackflipZVelocity, EWuwaJumpType::AirBackflip);
 }
 
 bool UWuwaCharacterMovementComponent::ApplyMovementProfile(const UWuwaMovementProfile *Profile)
@@ -180,6 +218,7 @@ bool UWuwaCharacterMovementComponent::ApplyMovementProfile(const UWuwaMovementPr
     ConfiguredWalkSpeed = Profile->WalkSpeed;
     ConfiguredRunSpeed = Profile->RunSpeed;
     ConfiguredSprintSpeed = Profile->SprintSpeed;
+    ConfiguredSprintRunDeceleration = Profile->SprintRunDeceleration;
     ConfiguredAnalogRunThreshold = Profile->AnalogRunThreshold;
     RuntimeSprintBlockedTags = Profile->SprintBlockedTags;
 
@@ -195,9 +234,12 @@ bool UWuwaCharacterMovementComponent::ApplyMovementProfile(const UWuwaMovementPr
     JumpZVelocity = Profile->JumpZVelocity;
     ConfiguredDoubleJumpZVelocity = Profile->DoubleJumpZVelocity;
     ConfiguredDoubleJumpForwardSpeed = Profile->DoubleJumpForwardSpeed;
+    ConfiguredBackflipZVelocity = Profile->BackflipZVelocity;
+    ConfiguredBackflipBackwardSpeed = Profile->BackflipBackwardSpeed;
     ConfiguredMaxJumpCount = Profile->MaxJumpCount;
     ConfiguredCoyoteTime = Profile->CoyoteTime;
     ConfiguredJumpBufferTime = Profile->JumpBufferTime;
+    ConfiguredHeavyLandingVelocityThreshold = Profile->HeavyLandingVelocityThreshold;
     GravityScale = Profile->GravityScale;
 
     RefreshLocomotionState();
@@ -237,6 +279,9 @@ void UWuwaCharacterMovementComponent::TickComponent(float DeltaTime, ELevelTick 
             StartJump(JumpZVelocity, EWuwaJumpType::Ground);
         }
     }
+
+    // 物理更新完成后再衰减 Dash 出口速度，避免与本帧 CharacterMovement 积分互相覆盖。
+    UpdateSprintRun(DeltaTime);
 }
 
 // 实现缓存跳跃的过期逻辑，避免落地前的跳跃请求无限期保留。
@@ -268,9 +313,9 @@ void UWuwaCharacterMovementComponent::ProcessLanded(const FHitResult &Hit, const
     LastLandingEvent.ImpactSpeed = FMath::Max(0.f, -ImpactVelocity.Z);
     LastLandingEvent.FallDistance = FallDistance;
 
-    // 目前真实落地都为普通落地，后续可根据落地时的速度和行为类型区分。
+    // 真实落地来源均为 Normal；Light/Heavy 只由接触前的向下速度分类
     LastLandingEvent.LandingSource = EWuwaLandingSource::Normal;
-    LastLandingEvent.LandingType = EWuwaLandingType::Light;
+    LastLandingEvent.LandingType = WuwaMovementRules::ClassifyLanding(LastLandingEvent.ImpactSpeed, ConfiguredHeavyLandingVelocityThreshold);
     LastLandingEvent.Sequence = NextSequence;
 
     // 落地时重置所有空中次数，避免滞空后继续使用二段跳、下落攻击等。
@@ -295,15 +340,28 @@ void UWuwaCharacterMovementComponent::SetLocomotionIntent(const FVector2D &MoveI
     RefreshLocomotionState();
 }
 
-void UWuwaCharacterMovementComponent::EnterSprintRun()
+bool UWuwaCharacterMovementComponent::EnterSprintRun(const FVector2D &MoveIntent)
 {
-    if (CanMaintainSprintRun())
+    if (MoveIntent.ContainsNaN())
     {
-        // 前冲完成后进入高速跑步。
-        SetSprinting(true);
+        return false;
     }
 
+    // Block.Input.Move 刚由 Router 释放，本次调用先同步真实 WASD，避免等待下一帧输入门面。
+    MoveInputMagnitude = FMath::Clamp(MoveIntent.Size(), 0.f, 1.f);
+
+    if (!CanMaintainSprintRun())
+    {
+        RefreshLocomotionState();
+        return false;
+    }
+
+    // Sprinting 标签只表示 Dash 出口减速阶段，不代表持续按键可永久保持高速。
+    SetSprinting(true);
+
     RefreshLocomotionState();
+
+    return bIsSprinting;
 }
 
 void UWuwaCharacterMovementComponent::ExitSprintRun()
@@ -315,8 +373,55 @@ void UWuwaCharacterMovementComponent::ExitSprintRun()
 bool UWuwaCharacterMovementComponent::CanMaintainSprintRun() const
 {
     const bool bBlocked = StateTagComponent && StateTagComponent->HasAny(RuntimeSprintBlockedTags);
+    const float HorizontalSpeed = Velocity.Size2D();
 
-    return !bBlocked && MoveInputMagnitude > 0.1f && IsMovingOnGround();
+    return !bBlocked && MoveInputMagnitude > 0.1f && IsMovingOnGround() &&
+           FMath::IsFinite(HorizontalSpeed) && HorizontalSpeed > ConfiguredRunSpeed + SprintRunExitSpeedTolerance;
+}
+
+void UWuwaCharacterMovementComponent::UpdateSprintRun(const float DeltaTime)
+{
+    if (!bIsSprinting)
+    {
+        return;
+    }
+
+    if (!CanMaintainSprintRun())
+    {
+        ExitSprintRun();
+        return;
+    }
+
+    if (DeltaTime <= 0.f)
+    {
+        return;
+    }
+
+    const FVector HorizontalVelocity(Velocity.X, Velocity.Y, 0.f);
+    const float CurrentHorizontalSpeed = HorizontalVelocity.Size();
+    float NewHorizontalSpeed = FMath::Max(
+        ConfiguredRunSpeed,
+        CurrentHorizontalSpeed - ConfiguredSprintRunDeceleration * DeltaTime);
+
+    if (NewHorizontalSpeed <= ConfiguredRunSpeed + SprintRunExitSpeedTolerance)
+    {
+        // 最后一帧直接钳到 RunSpeed，避免普通移动长期保留极小的超速尾差。
+        NewHorizontalSpeed = ConfiguredRunSpeed;
+    }
+
+    // 只缩放本帧 CharacterMovement 已计算出的水平向量，保留 WASD 转向结果和垂直速度。
+    const FVector NewHorizontalVelocity = HorizontalVelocity.GetSafeNormal() * NewHorizontalSpeed;
+    Velocity.X = NewHorizontalVelocity.X;
+    Velocity.Y = NewHorizontalVelocity.Y;
+
+    if (NewHorizontalSpeed <= ConfiguredRunSpeed)
+    {
+        ExitSprintRun();
+        return;
+    }
+
+    // 下一帧物理计算前让速度上限跟随衰减结果，避免 UE 内置超速制动再次抢先压到 RunSpeed。
+    MaxWalkSpeed = NewHorizontalSpeed;
 }
 
 void UWuwaCharacterMovementComponent::RefreshLocomotionState()
@@ -329,7 +434,9 @@ void UWuwaCharacterMovementComponent::RefreshLocomotionState()
 
     if (bIsSprinting)
     {
-        MaxWalkSpeed = ConfiguredSprintSpeed;
+        // Sprint Run 的实际减速只由 UpdateSprintRun 负责；
+        // 上限跟随当前出口速度，使 CharacterMovement 不会把继承速度判定为普通移动超速。
+        MaxWalkSpeed = FMath::Max(ConfiguredRunSpeed, Velocity.Size2D());
     }
     else if (MoveInputMagnitude >= ConfiguredAnalogRunThreshold)
     {
@@ -369,12 +476,15 @@ void UWuwaCharacterMovementComponent::SetSprinting(const bool bNewSprinting)
 
 void UWuwaCharacterMovementComponent::OnMovementModeChanged(const EMovementMode PreviousMovementMode, const uint8 PreviousCustomMode)
 {
-    // 记录离地前的时间戳，用于土狼时间判断。
+    // 在 Super 前保存旧模式事实，供土狼时间与事件消费者使用
     const bool bWasGrounded = PreviousMovementMode == MOVE_Walking || PreviousMovementMode == MOVE_NavWalking;
 
     Super::OnMovementModeChanged(PreviousMovementMode, PreviousCustomMode);
 
-    if (bWasGrounded && IsFalling())
+    const EMovementMode NewMovementMode = MovementMode;
+    const uint8 NewCustomMode = CustomMovementMode;
+
+    if (bWasGrounded && NewMovementMode == MOVE_Falling)
     {
         AirActionState.LastGroundedTime = GetMovementTime();
 
@@ -385,8 +495,10 @@ void UWuwaCharacterMovementComponent::OnMovementModeChanged(const EMovementMode 
         }
     }
 
-    // 离地时立即清除状态
+    // 先同步 Movement Component 自己拥有的移动状态，再通知外部消费者
     RefreshLocomotionState();
+
+    OnWuwaMovementModeChanged.Broadcast(PreviousMovementMode, PreviousCustomMode, NewMovementMode, NewCustomMode);
 }
 
 void UWuwaCharacterMovementComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)

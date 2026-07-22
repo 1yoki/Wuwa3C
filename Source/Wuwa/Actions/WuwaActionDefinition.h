@@ -38,6 +38,10 @@ public:
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Action|Buffer", meta = (ClampMin = "0.0", Units = "s"))
     float BufferTime = 0.0f;
 
+    // 动作成功启动后，到允许同一 ActionTag 再次启动的最短时间
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Action|Cooldown", meta = (ClampMin = "0.0", Units = "s"))
+    float CooldownDuration = 0.0f;
+
     // 当前动作允许打断的动作标签
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Action|Cancel", meta = (Categories = "Action"))
     FGameplayTagContainer CanCancelActions;
@@ -49,6 +53,10 @@ public:
     // 指定动作位移由哪个系统负责
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Action|Movement")
     EWuwaActionMovementPolicy MovementPolicy = EWuwaActionMovementPolicy::None;
+
+    // 供 RootMotionSource 位移策略使用
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Action|Movement|Root Motion Source", meta = (EditCondition = "MovementPolicy == EWuwaActionMovementPolicy::RootMotionSource"))
+    FWuwaRootMotionSourceConfig RootMotionSourceConfig;
 
     // Montage 只作为 Executor 的表现
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Action|Animation")

@@ -17,8 +17,10 @@ class UWuwaInputBufferComponent;
 
 class UWuwaMovementProfile;
 class UWuwaCharacterMovementComponent;
+class UWuwaMovementActionExecutorComponent;
 class UWuwaStateTagComponent;
 class UWuwaActionRouterComponent;
+class UWuwaCharacterActionSourceComponent;
 
 struct FInputActionValue;
 
@@ -53,6 +55,14 @@ class AWuwaCharacter : public ACharacter
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UWuwaActionRouterComponent> ActionRouterComponent;
 
+	// 把语义 Input Command 转换为角色 Action Request 的组件。
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UWuwaCharacterActionSourceComponent> ActionSourceComponent;
+
+	// 执行获准的移动类 Action，并持有其运行资源
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UWuwaMovementActionExecutorComponent> MovementActionExecutorComponent;
+
 	// 当前角色使用的移动配置。
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UWuwaMovementProfile> MovementProfile;
@@ -78,10 +88,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Input")
 	virtual void DoJumpEnd();
 
-	// 根据当前移动状态请求空中 Sprint。
-	UFUNCTION(BlueprintCallable, Category = "Input")
-	virtual bool DoSprintPressed();
-
 public:
 	/** 获取角色统一状态标签组件。 */
 	UFUNCTION(BlueprintPure, Category = "Wuwa|State")
@@ -96,8 +102,17 @@ public:
 		return ActionRouterComponent;
 	}
 
+	// 查询当前 Router 是否正在执行任一二段跳动作
+	bool IsAirDoubleJumpActionActive() const;
+
 	// 转发持续移动意图。
 	void SetLocomotionIntent(const FVector2D &MoveIntent);
+
+	// 返回 Controller 最近一帧提交的真实移动意图，不受 Block.Input.Move 清零影响
+	const FVector2D &GetCurrentMoveIntent() const
+	{
+		return CurrentMoveIntent;
+	}
 
 	// 将离散输入命令提交给角色输入缓存。
 	bool SubmitInputCommand(const FWuwaInputCommand &Command);
@@ -117,6 +132,13 @@ public:
 private:
 	// 所有缓存查询使用同一个 World 时间基准。
 	double GetInputCommandTime() const;
+
+	// 查询持续移动输入是否被当前动作阻断。
+	bool IsMoveInputBlocked() const;
+
+	// Controller 每帧提交的真实 WASD 快照；动作输入阻止不能修改该值
+	UPROPERTY(Transient)
+	FVector2D CurrentMoveIntent = FVector2D::ZeroVector;
 
 public:
 	/** Returns CameraBoom subobject **/

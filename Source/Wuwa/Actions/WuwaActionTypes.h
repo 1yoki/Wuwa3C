@@ -6,6 +6,7 @@
 #include "WuwaActionTypes.generated.h"
 
 class UWuwaActionDefinition;
+class UCurveFloat;
 
 // 描述一次动作请求最终进入的高层结果。
 UENUM(BlueprintType)
@@ -53,6 +54,38 @@ enum class EWuwaActionMovementPolicy : uint8
     RootMotionMontage UMETA(DisplayName = "Root Motion Montage"),
     MotionWarpedRootMotion UMETA(DisplayName = "Motion Warped Root Motion"),
     RootMotionSource UMETA(DisplayName = "Root Motion Source")
+};
+
+/**
+ * Root Motion Source 动作使用的只读位移配置。
+ * Action 开始后 Executor 必须使用这份快照，不能持续读取玩家输入。
+ */
+USTRUCT(BlueprintType)
+struct WUWA_API FWuwaRootMotionSourceConfig
+{
+    GENERATED_BODY()
+
+    // Capsule 在水平面上的目标移动距离。
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Root Motion Source", meta = (ClampMin = "0.01", Units = "cm"))
+    float Distance = 500.0f;
+
+    // 达到目标位置所使用的时间
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Root Motion Source", meta = (ClampMin = "0.01", Units = "s"))
+    float Duration = 0.35f;
+
+    // X 为标准化时间，Y 为标准化位移进度。
+    // 空值表示线性移动；曲线的导数决定实际速度变化。
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Root Motion Source")
+    TObjectPtr<UCurveFloat> TimeMappingCurve = nullptr;
+
+    // 后撤等动作开启后保持触发瞬间的角色朝向
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Root Motion Source")
+    bool bPreserveFacing = false;
+
+    bool IsRuntimeValid() const
+    {
+        return FMath::IsFinite(Distance) && FMath::IsFinite(Duration) && Duration > 0.f && Distance > 0.f;
+    }
 };
 
 /*

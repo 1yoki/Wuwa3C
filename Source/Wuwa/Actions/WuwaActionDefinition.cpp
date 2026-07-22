@@ -8,7 +8,7 @@
 
 bool UWuwaActionDefinition::IsRuntimeValid() const
 {
-    if (!ActionTag.IsValid() || Priority < 0 || BufferTime < 0.f)
+    if (!ActionTag.IsValid() || Priority < 0 || BufferTime < 0.f || CooldownDuration < 0.f)
     {
         return false;
     }
@@ -19,8 +19,16 @@ bool UWuwaActionDefinition::IsRuntimeValid() const
         return false;
     }
 
+    const bool bUsesRootMotionSource = MovementPolicy == EWuwaActionMovementPolicy::RootMotionSource;
+
+    if (bUsesRootMotionSource && !RootMotionSourceConfig.IsRuntimeValid())
+    {
+        return false;
+    }
+
     const bool bNeedsMontage = MovementPolicy == EWuwaActionMovementPolicy::RootMotionMontage ||
-                               MovementPolicy == EWuwaActionMovementPolicy::MotionWarpedRootMotion;
+                               MovementPolicy == EWuwaActionMovementPolicy::MotionWarpedRootMotion ||
+                               bUsesRootMotionSource;
 
     // Montage 位移策略必须提供有效动画
     return !bNeedsMontage || Montage != nullptr;
@@ -63,20 +71,25 @@ EDataValidationResult UWuwaActionDefinition::IsDataValid(
     Check(
         BufferTime >= 0.f,
         TEXT("BufferTime 不能为负数"));
+    Check(
+        FMath::IsFinite(CooldownDuration) &&
+            CooldownDuration >= 0.f,
+        TEXT("CooldownDuration 必须是有限的非负数"));
 
     Check(
         !RequiredTags.HasAny(BlockedTags),
         TEXT("RequiredTags 与 BlockedTags 不能冲突"));
 
-    const bool bNeedsMontage =
-        MovementPolicy ==
-            EWuwaActionMovementPolicy::RootMotionMontage ||
-        MovementPolicy ==
-            EWuwaActionMovementPolicy::MotionWarpedRootMotion;
+    const bool bUsesRootMotionSource = MovementPolicy == EWuwaActionMovementPolicy::RootMotionSource;
 
-    Check(
-        !bNeedsMontage || Montage != nullptr,
-        TEXT("当前 MovementPolicy 必须配置 Montage"));
+    const bool bNeedsMontage =
+        MovementPolicy == EWuwaActionMovementPolicy::RootMotionMontage ||
+        MovementPolicy == EWuwaActionMovementPolicy::MotionWarpedRootMotion ||
+        bUsesRootMotionSource;
+
+    Check(!bNeedsMontage || Montage != nullptr, TEXT("当前 MovementPolicy 必须配置 Montage"));
+
+    Check(!bUsesRootMotionSource || RootMotionSourceConfig.IsRuntimeValid(), TEXT("RootMotionSource 的 Distance 和 Duration 必须是有限正数"));
 
     return Result;
 }

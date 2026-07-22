@@ -10,17 +10,26 @@ enum class EWuwaJumpType : uint8
     None UMETA(DisplayName = "None"),
     Ground UMETA(DisplayName = "地面跳跃"),
     Coyote UMETA(DisplayName = "土狼跳跃"),
-    AirSprint UMETA(DisplayName = "空中冲刺跳跃")
+    AirSprint UMETA(DisplayName = "空中定向二段跳"),
+    AirBackflip UMETA(DisplayName = "空中后空翻")
 };
 
-// 描述落地行为需要使用的表现类型。
+// 保存本次普通落地的物理冲击强度分类。
 UENUM(BlueprintType)
 enum class EWuwaLandingType : uint8
 {
     None UMETA(DisplayName = "尚未落地"),
-    Light UMETA(DisplayName = "普通落地"),
-    Heavy UMETA(DisplayName = "下落攻击落地")
+    Light UMETA(DisplayName = "轻落地"),
+    Heavy UMETA(DisplayName = "重落地")
 };
+
+namespace WuwaMovementRules
+{
+    FORCEINLINE EWuwaLandingType ClassifyLanding(const float ImpactSpeed, const float HeavyLandingVelocityThreshold)
+    {
+        return ImpactSpeed >= HeavyLandingVelocityThreshold ? EWuwaLandingType::Heavy : EWuwaLandingType::Light;
+    }
+}
 
 // 描述本次落地由什么行为触发。
 UENUM(BlueprintType)
