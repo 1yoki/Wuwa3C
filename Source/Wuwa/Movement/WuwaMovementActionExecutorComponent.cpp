@@ -19,6 +19,8 @@ namespace
     constexpr uint16 GroundActionRootMotionPriority = 1000;
 
     const FName DashSprintHandoffNotifyName(TEXT("DashSprintHandoff"));
+    
+    const FName BackstepMoveCancelBeginNotifyName(TEXT("BackstepMoveCancelBegin"));
 }
 
 UWuwaMovementActionExecutorComponent::UWuwaMovementActionExecutorComponent()
@@ -147,12 +149,31 @@ bool UWuwaMovementActionExecutorComponent::StartAction(const FWuwaActionRequest 
         return false;
     }
 
+    /*
     const bool bGroundRootMotionAction = IsGroundRootMotionActionTag(Request.ActionTag);
 
     const bool bBackflip = Request.ActionTag == WuwaGameplayTags::Action_Movement_DoubleJump_Backflip;
 
     // 后空翻固定需要保持起跳朝向；地面动作是否保持朝向由 Definition 配置决定
     const bool bShouldPreserveFacing = bBackflip || (bGroundRootMotionAction && Definition->RootMotionSourceConfig.bPreserveFacing);
+    */
+    const bool bGroundRootMotionAction = IsGroundRootMotionActionTag(Request.ActionTag);
+
+    const bool bDirectionalDoubleJump = Request.ActionTag == WuwaGameplayTags::Action_Movement_DoubleJump_Directional;
+
+    const bool bBackflip = Request.ActionTag == WuwaGameplayTags::Action_Movement_DoubleJump_Backflip;
+
+    const bool bGroundDash = Request.ActionTag == WuwaGameplayTags::Action_Movement_Dash_Forward;
+
+    const bool bGroundBackstep = Request.ActionTag == WuwaGameplayTags::Action_Movement_Backstep;
+
+    // 有方向动作必须先面向 Context 的世界位移方向。
+    const bool bShouldFaceActionDirection = bDirectionalDoubleJump || bGroundDash;
+
+    // Backflip 固定保持起跳朝向；Backstep 继续服从 Definition 配置。
+    const bool bShouldPreserveStartingFacing = bBackflip || (bGroundBackstep && Definition->RootMotionSourceConfig.bPreserveFacing);
+
+    const bool bNeedsFacingRotationOverride = bShouldFaceActionDirection || bShouldPreserveStartingFacing;
 
     float MontagePlayRate = 1.f;
 
@@ -178,10 +199,24 @@ bool UWuwaMovementActionExecutorComponent::StartAction(const FWuwaActionRequest 
     // 新动作即将取得自己的移动资源，必须立即结束可能仍存在的 Dash 出口减速状态。
     MovementComponent->ExitSprintRun();
 
-    if (bShouldPreserveFacing)
+    if (bNeedsFacingRotationOverride)
     {
-        // 在 Montage 和位移资源启动前锁住旋转策略，避免首帧后移速度触发角色转身
+        // 先取得旋转策略所有权，防止动作开始后 Movement、
+        // Hard Target 或 Controller 再次改写角色朝向。
         AcquireFacingRotationOverride(Request.ActionTag);
+
+        if (!bHasFacingRotationOverride)
+        {
+            return false;
+        }
+    }
+
+    if (bShouldFaceActionDirection && !MovementComponent->SnapFacingToWorldDirection(Request.Context.WorldDirection))
+    {
+        // 朝向提交失败时必须回滚已经取得的覆盖，
+        // Montage、RMS 和 Gameplay 位移都不能继续启动。
+        ReleaseFacingRotationOverride();
+        return false;
     }
 
     // 先确认表现资源可以播放，再提交 Gameplay 位移。
@@ -386,7 +421,8 @@ bool UWuwaMovementActionExecutorComponent::CanStartAirDoubleJumpAction(const FWu
     const bool bBackflip = Request.ActionTag == WuwaGameplayTags::Action_Movement_DoubleJump_Backflip;
     const double DirectionDot = FVector::DotProduct(FacingDirection, WorldDirection);
 
-    const bool bDirectionalContextValid = bDirectional && !Context.InputDirection.IsNearlyZero() && DirectionDot >= 0.99f;
+    const bool bDirectionalContextValid = bDirectional && !Context.InputDirection.IsNearlyZero();
+
     const bool bBackflipContextValid = bBackflip && Context.InputDirection.IsNearlyZero() && DirectionDot <= -0.99f;
 
     if (!bDirectionalContextValid && !bBackflipContextValid)
@@ -424,7 +460,7 @@ bool UWuwaMovementActionExecutorComponent::CanStartGroundRootMotionAction(const 
     const bool bGroundBackstep = Request.ActionTag == WuwaGameplayTags::Action_Movement_Backstep;
     const double DirectionDot = FVector::DotProduct(FacingDirection, WorldDirection);
 
-    const bool bGroundDashContextValid = bGroundDash && !Context.InputDirection.IsNearlyZero() && DirectionDot >= 0.99f;
+    const bool bGroundDashContextValid = bGroundDash && !Context.InputDirection.IsNearlyZero();
     const bool bGroundBackstepContextValid = bGroundBackstep && Context.InputDirection.IsNearlyZero() && DirectionDot <= -0.99f;
 
     if (!bGroundDashContextValid && !bGroundBackstepContextValid)
@@ -557,7 +593,6 @@ void UWuwaMovementActionExecutorComponent::ReleaseActiveRootMotionSource()
             // 离地时只停止 RMS，不把当前水平惯性或主动跳跃的 Z 速度清零
             RootMotionSource->FinishVelocityParams.Mode = ERootMotionFinishVelocityMode::MaintainLastRootMotionVelocity;
         }
-
     }
 
     // 无论是否保留速度，都必须按当前 Executor 持有的 ID 移除 RMS。
@@ -573,6 +608,8 @@ bool UWuwaMovementActionExecutorComponent::HasActiveExecution() const
 
 void UWuwaMovementActionExecutorComponent::ClearActiveRuntime()
 {
+    bBackstepMoveCancelWindowOpen = false;
+    
     // 外部资源必须先完成清理，再清空本地记录
     ActiveActionTag = FGameplayTag();
     ActiveMontage = nullptr;
@@ -753,17 +790,17 @@ void UWuwaMovementActionExecutorComponent::HandleMontageNotifyBegin(
     const FName NotifyName,
     const FBranchingPointNotifyPayload &BranchingPointPayload)
 {
-    if (NotifyName != DashSprintHandoffNotifyName ||
-        !HasActiveExecution() ||
-        ActiveActionTag != WuwaGameplayTags::Action_Movement_Dash_Forward)
+    if (!HasActiveExecution())
     {
         return;
     }
+    
 
     AWuwaCharacter *Character = CharacterOwner.Get();
     UWuwaCharacterMovementComponent *Movement = MovementComponent.Get();
     UWuwaActionRouterComponent *Router = ActionRouter.Get();
 
+    // Notify 必须来自当前 Executor 持有的 Montage。
     if (!IsValid(Character) || !IsValid(Character->GetMesh()) ||
         !IsValid(Movement) || !IsValid(Router) ||
         BranchingPointPayload.SkelMeshComponent != Character->GetMesh() ||
@@ -771,7 +808,24 @@ void UWuwaMovementActionExecutorComponent::HandleMontageNotifyBegin(
     {
         return;
     }
+    
+    // Backstep 移动取消窗口开始。
+    if (NotifyName == BackstepMoveCancelBeginNotifyName && ActiveActionTag == WuwaGameplayTags::Action_Movement_Backstep)
+    {
+        bBackstepMoveCancelWindowOpen = true;
 
+        // 如果玩家在窗口打开前已经按住 WASD，立即尝试取消。
+        TryCancelBackstepByMoveIntent(Character->GetCurrentMoveIntent());
+
+        return;
+    }
+    
+    // Dash Handoff处理开始
+    if (NotifyName != DashSprintHandoffNotifyName || ActiveActionTag != WuwaGameplayTags::Action_Movement_Dash_Forward)
+    {
+        return;
+    }
+    
     if (!Router->HasActiveAction() ||
         Router->GetCurrentActionTag() != WuwaGameplayTags::Action_Movement_Dash_Forward ||
         !Movement->IsMovingOnGround())
@@ -844,4 +898,29 @@ void UWuwaMovementActionExecutorComponent::HandleMontageEnded(UAnimMontage *Mont
 
     // Router 已先行失效时执行本地兜底，避免旋转覆盖残留。
     EndAction(FinishedActionTag, EndReason);
+}
+
+bool UWuwaMovementActionExecutorComponent::TryCancelBackstepByMoveIntent(const FVector2D& MoveIntent)
+{
+    constexpr float MoveCancelThreshold = 0.1f;
+    
+    if (!bBackstepMoveCancelWindowOpen || MoveIntent.ContainsNaN() || MoveIntent.IsNearlyZero(MoveCancelThreshold)
+        || ActiveActionTag != WuwaGameplayTags::Action_Movement_Backstep)
+    {
+        return false;
+    }
+    
+    UWuwaActionRouterComponent* Router = ActionRouter.Get();
+    
+    if(!IsValid(Router) || !Router->HasActiveAction() || 
+        Router->GetCurrentActionTag() != WuwaGameplayTags::Action_Movement_Backstep)
+    {
+        return false;
+    }
+    
+    // 在同步结束前先关窗，防止回调或重复输入造成递归取消。
+    bBackstepMoveCancelWindowOpen = false;
+    
+    // 玩家主动使用移动输入取消，语义上使用 Cancelled
+    return Router->CancelCurrent();
 }

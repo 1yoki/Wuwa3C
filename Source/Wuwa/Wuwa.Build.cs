@@ -12,33 +12,18 @@ public class Wuwa : ModuleRules
 			"Core",
 			"CoreUObject",
 			"Engine",
-			"InputCore",
-			"EnhancedInput",
-			"AIModule",
-			"StateTreeModule",
-			"GameplayStateTreeModule",
-			"UMG",
-			"Slate",
 			"GameplayTags",
 		});
 
-		PrivateDependencyModuleNames.AddRange(new string[] { });
+		PrivateDependencyModuleNames.AddRange(new string[] {
+			"InputCore",
+			"EnhancedInput",
+			"UMG",
+			"Slate",
+		});
 
 		PublicIncludePaths.AddRange(new string[] {
-			"Wuwa",
-			"Wuwa/Variant_Platforming",
-			"Wuwa/Variant_Platforming/Animation",
-			"Wuwa/Variant_Combat",
-			"Wuwa/Variant_Combat/AI",
-			"Wuwa/Variant_Combat/Animation",
-			"Wuwa/Variant_Combat/Gameplay",
-			"Wuwa/Variant_Combat/Interfaces",
-			"Wuwa/Variant_Combat/UI",
-			"Wuwa/Variant_SideScrolling",
-			"Wuwa/Variant_SideScrolling/AI",
-			"Wuwa/Variant_SideScrolling/Gameplay",
-			"Wuwa/Variant_SideScrolling/Interfaces",
-			"Wuwa/Variant_SideScrolling/UI"
+			"Wuwa"
 		});
 
 		// Uncomment if you are using Slate UI

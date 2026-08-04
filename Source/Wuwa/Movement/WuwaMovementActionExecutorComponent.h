@@ -35,6 +35,9 @@ public:
     virtual bool StartAction(const FWuwaActionRequest &Request) override;
 
     virtual void EndAction(const FGameplayTag &ActionTag, EWuwaActionEndReason EndReason) override;
+    
+    // Backstep 取消窗口开启后，可以用 WASD 结束动作。
+    bool TryCancelBackstepByMoveIntent(const FVector2D& MoveIntent);
 
 protected:
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -47,7 +50,7 @@ private:
     TObjectPtr<UWuwaCharacterMovementComponent> MovementComponent;
 
     UPROPERTY(Transient)
-    TObjectPtr<UWuwaActionRouterComponent> ActionRouter;
+    TWeakObjectPtr<UWuwaActionRouterComponent> ActionRouter;
 
     /**
      * Executor 启动 Montage 后，结束或失败时必须知道自己创建了哪些资源
@@ -96,7 +99,9 @@ private:
 
     // Ground Action 因离地或 Dash Handoff 退出时保留当前速度；释放 RMS 后必须立即清除。
     bool bPreserveGroundActionVelocityOnRelease = false;
-
+    
+    // Backstep Montage 已进入允许移动打断的时间段。
+    bool bBackstepMoveCancelWindowOpen = false;
 private:
     // 把正常或中断的 Montage End 转换为 Router End Reason
     void HandleMontageEnded(UAnimMontage *Montage, bool bInterrupted);

@@ -15,10 +15,6 @@ class AWuwaGameMode : public AGameModeBase
 	GENERATED_BODY()
 
 public:
-	
 	/** Constructor */
 	AWuwaGameMode();
 };
-
-
-

@@ -2,10 +2,12 @@
 
 #include "WuwaPlayerController.h"
 #include "WuwaCharacter.h"
+#include "Debug/WuwaDebugVisualizationComponent.h"
 #include "InputMappingContext.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Engine/LocalPlayer.h"
+#include "InputCoreTypes.h"
 #include "InputActionValue.h"
 #include "Input/WuwaInputConfig.h"
 
@@ -15,6 +17,12 @@
 #include "Blueprint/UserWidget.h"
 #include "Wuwa.h"
 #include "Widgets/Input/SVirtualJoystick.h"
+
+AWuwaPlayerController::AWuwaPlayerController()
+{
+	// Controller 是本地视口生命周期权威；Debug Component 只负责只读绘制。
+	DebugVisualizationComponent = CreateDefaultSubobject<UWuwaDebugVisualizationComponent>(TEXT("DebugVisualizationComponent"));
+}
 
 void AWuwaPlayerController::BeginPlay()
 {
@@ -47,6 +55,18 @@ void AWuwaPlayerController::SetupInputComponent()
 	{
 		return;
 	}
+
+#if !UE_BUILD_SHIPPING
+	if (IsValid(InputComponent))
+	{
+		// Debug 开关不属于 Gameplay 输入领域，因此不创建 Command、Tag 或 Enhanced Input 资产。
+		InputComponent->BindKey(
+			EKeys::F10,
+			IE_Pressed,
+			this,
+			&AWuwaPlayerController::CycleDebugVisualizationMode);
+	}
+#endif
 
 	if (!InputConfig)
 	{
@@ -169,6 +189,16 @@ void AWuwaPlayerController::SetupInputComponent()
 		&AWuwaPlayerController::Input_SwitchTarget);
 }
 
+void AWuwaPlayerController::CycleDebugVisualizationMode()
+{
+	if (!IsValid(DebugVisualizationComponent))
+	{
+		return;
+	}
+
+	DebugVisualizationComponent->CycleVisualizationMode();
+}
+
 bool AWuwaPlayerController::ShouldUseTouchControls() const
 {
 	// are we on a mobile platform? Should we force touch?
@@ -247,7 +277,8 @@ void AWuwaPlayerController::ProcessInputIntent()
 		return;
 	}
 
-	// 离散命令会同步进入 Router；Sprint 成功时会在本帧立即授予移动阻断标签。
+	// 本帧提交全部边沿命令：Targeting 命令即时处理，普通动作进入 FIFO/Router。
+	// Sprint 成功时仍会在本帧立即授予移动阻断标签。
 	SubmitTransientInputCommands(*ControlledCharacter);
 
 	// Controller 始终保留真实 MoveIntent，Character 根据状态标签决定是否向下传递。

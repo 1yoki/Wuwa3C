@@ -9,6 +9,7 @@
 
 class UInputMappingContext;
 class UWuwaInputConfig;
+class UWuwaDebugVisualizationComponent;
 struct FInputActionValue;
 class UUserWidget;
 
@@ -23,7 +24,17 @@ class AWuwaPlayerController : public APlayerController
 {
 	GENERATED_BODY()
 
+public:
+	AWuwaPlayerController();
+
 protected:
+	/**
+	 * 本地演示视口的只读 Debug 绘制拥有者。
+	 * Controller 只负责装配与切换，不参与格式化 Gameplay 事实。
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Debug")
+	TObjectPtr<UWuwaDebugVisualizationComponent> DebugVisualizationComponent;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UWuwaInputConfig> InputConfig;
 
@@ -45,6 +56,9 @@ protected:
 	void Input_GrapplePressed();
 	void Input_LockTargetPressed();
 	void Input_SwitchTarget(const FInputActionValue &Value);
+
+	// 仅切换演示叠层，不生成 Input Command，也不进入 FIFO/Router。
+	void CycleDebugVisualizationMode();
 
 	void ProcessInputIntent();
 

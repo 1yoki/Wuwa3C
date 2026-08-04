@@ -8,6 +8,7 @@
 
 class UWuwaMovementProfile;
 class UWuwaStateTagComponent;
+class UWuwaTargetingComponent;
 
 // 广播已经发生的着陆事件。
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FWuwaLandingEventSignature, const FWuwaLandingEvent &, LandingEvent);
@@ -32,8 +33,14 @@ public:
 	// 设置统一状态标签组件。
 	void SetStateTagComponent(UWuwaStateTagComponent *InStateTagComponent);
 
+	// Character Composition Root 注入同 Owner 的目标权威；Movement 只读消费 Context。
+	bool SetTargetingComponent(UWuwaTargetingComponent *InTargetingComponent);
+
 	// 复制 Profile 中的参数，不在Tick中每帧修改。
 	bool ApplyMovementProfile(const UWuwaMovementProfile *Profile);
+
+	// Directional Action 开始前瞬时对齐世界方向。
+	bool SnapFacingToWorldDirection(const FVector &WorldDirection);
 
 	// 接收持续移动输入。
 	void SetLocomotionIntent(const FVector2D &MoveIntent);
@@ -85,6 +92,9 @@ protected:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction *ThisTickFunction) override;
 
 	virtual void ProcessLanded(const FHitResult &Hit, float RemainingTime, int32 Iterations) override;
+
+	// Hard Lock 时提供目标朝向，其余状态保持 UE 原生移动朝向。
+	virtual FRotator ComputeOrientToMovementRotation(const FRotator &CurrentRotation, float DeltaTime, FRotator &DeltaRotation) const override;
 
 private:
 	bool CanMaintainSprintRun() const;
@@ -144,4 +154,8 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UWuwaStateTagComponent> StateTagComponent;
+
+	// 弱引用不改变 Targeting 生命周期；Movement 不能成为目标状态拥有者。
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UWuwaTargetingComponent> TargetingComponent;
 };

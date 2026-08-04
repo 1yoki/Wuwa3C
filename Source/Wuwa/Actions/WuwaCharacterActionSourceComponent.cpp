@@ -3,6 +3,7 @@
 #include "Actions/WuwaActionDefinition.h"
 #include "Core/WuwaGameplayTags.h"
 #include "Movement/WuwaCharacterMovementComponent.h"
+#include "Math/RotationMatrix.h"
 #include "WuwaCharacter.h"
 #include "Wuwa.h"
 
@@ -84,9 +85,59 @@ bool UWuwaCharacterActionSourceComponent::BuildActionRequest(const FWuwaInputCom
         return false;
     }
 
+    /*
     const bool bHasWASDDirection = !Command.Direction.IsNearlyZero();
 
     UWuwaActionDefinition *SelectedDefinition = nullptr;
+    */
+
+    const bool bFiniteInputDirection = FMath::IsFinite(Command.Direction.X) && FMath::IsFinite(Command.Direction.Y);
+
+    if (!bFiniteInputDirection)
+    {
+        return false;
+    }
+
+    const bool bHasWASDDirection = !Command.Direction.IsNearlyZero();
+    FVector InputWorldDirectionSnapshot = FVector::ZeroVector;
+
+    if (bHasWASDDirection)
+    {
+        // 与 Character::DoMove 使用同一相机 Yaw 基底：
+        // Input.X 表示左右，Input.Y 表示前后。
+
+        const FRotator ControlRotation = CharacterOwner->GetControlRotation();
+
+        if (ControlRotation.ContainsNaN())
+        {
+            return false;
+        }
+
+        const FRotator YawRotation(0.f, ControlRotation.Yaw, 0.f);
+
+        const FRotationMatrix ViewRotationMatrix(YawRotation);
+
+        const FVector CameraForward = ViewRotationMatrix.GetUnitAxis(EAxis::X);
+
+        const FVector CameraRight = ViewRotationMatrix.GetUnitAxis(EAxis::Y);
+
+        InputWorldDirectionSnapshot = CameraForward * Command.Direction.Y + CameraRight * Command.Direction.X;
+
+        InputWorldDirectionSnapshot.Z = 0.f;
+
+        const bool bFiniteWorldDirection = FMath::IsFinite(InputWorldDirectionSnapshot.X) && FMath::IsFinite(InputWorldDirectionSnapshot.Y);
+
+        if (!bFiniteWorldDirection || InputWorldDirectionSnapshot.IsNearlyZero())
+        {
+            return false;
+        }
+
+        // 对角输入只决定方向，动作距离和速度仍由 Definition/Profile 权威配置。
+        InputWorldDirectionSnapshot = InputWorldDirectionSnapshot.GetSafeNormal2D();
+    }
+
+    UWuwaActionDefinition *SelectedDefinition = nullptr;
+
     FVector WorldDirectionSnapshot = FVector::ZeroVector;
     const TCHAR *BranchName = TEXT("Invalid");
 
@@ -94,7 +145,7 @@ bool UWuwaCharacterActionSourceComponent::BuildActionRequest(const FWuwaInputCom
     {
         SelectedDefinition = bHasWASDDirection ? DirectionalDoubleJumpDefinition.Get() : BackflipDoubleJumpDefinition.Get();
 
-        WorldDirectionSnapshot = bHasWASDDirection ? FacingDirectionSnapshot : -FacingDirectionSnapshot;
+        WorldDirectionSnapshot = bHasWASDDirection ? InputWorldDirectionSnapshot : -FacingDirectionSnapshot;
 
         BranchName = bHasWASDDirection ? TEXT("AirDirectional") : TEXT("AirBackflip");
     }
@@ -102,7 +153,7 @@ bool UWuwaCharacterActionSourceComponent::BuildActionRequest(const FWuwaInputCom
     {
         SelectedDefinition = bHasWASDDirection ? GroundDashDefinition.Get() : GroundBackstepDefinition.Get();
 
-        WorldDirectionSnapshot = bHasWASDDirection ? FacingDirectionSnapshot : -FacingDirectionSnapshot;
+        WorldDirectionSnapshot = bHasWASDDirection ? InputWorldDirectionSnapshot : -FacingDirectionSnapshot;
 
         BranchName = bHasWASDDirection ? TEXT("GroundDash") : TEXT("GroundBackstep");
     }

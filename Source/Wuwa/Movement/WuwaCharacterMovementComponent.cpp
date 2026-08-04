@@ -5,6 +5,7 @@
 #include "Movement/WuwaMovementProfile.h"
 #include "GameFramework/Character.h"
 #include "Engine/World.h"
+#include "Targeting/WuwaTargetingComponent.h"
 #include "Wuwa.h"
 
 namespace
@@ -71,9 +72,137 @@ void UWuwaCharacterMovementComponent::SetStateTagComponent(UWuwaStateTagComponen
     RefreshLocomotionState();
 }
 
+bool UWuwaCharacterMovementComponent::SetTargetingComponent(UWuwaTargetingComponent *InTargetingComponent)
+{
+    TargetingComponent.Reset();
+
+    if (!IsValid(InTargetingComponent) ||
+        !InTargetingComponent->IsInitialized() ||
+        InTargetingComponent->GetOwner() != GetOwner())
+    {
+        // Movement 只能读取同一角色装配的 Targeting，禁止跨 Actor 消费目标事实。
+        return false;
+    }
+
+    TargetingComponent = InTargetingComponent;
+    return true;
+}
+
+bool UWuwaCharacterMovementComponent::SnapFacingToWorldDirection(const FVector &WorldDirection)
+{
+    if (!HasValidData() || !IsValid(CharacterOwner))
+    {
+        return false;
+    }
+
+    FVector HorizontalDirection = WorldDirection;
+    HorizontalDirection.Z = 0.f;
+
+    const bool bFiniteDirection = FMath::IsFinite(HorizontalDirection.X) && FMath::IsFinite(HorizontalDirection.Y);
+
+    if (!bFiniteDirection || HorizontalDirection.IsNearlyZero())
+    {
+        return false;
+    }
+
+    HorizontalDirection = HorizontalDirection.GetSafeNormal2D();
+
+    FRotator ActionRotation = CharacterOwner->GetActorRotation();
+
+    ActionRotation.Yaw = HorizontalDirection.Rotation().Yaw;
+
+    // Dash/RMS 会立即开始位移；若仍按普通 RotationRate 转向，
+    // Capsule 会在 Mesh 尚未对齐时产生明显侧滑。
+    return CharacterOwner->SetActorRotation(ActionRotation);
+}
+
 double UWuwaCharacterMovementComponent::GetMovementTime() const
 {
     return GetWorld() ? static_cast<double>(GetWorld()->GetTimeSeconds()) : 0.0;
+}
+
+FRotator UWuwaCharacterMovementComponent::ComputeOrientToMovementRotation(const FRotator &CurrentRotation, float DeltaTime, FRotator &DeltaRotation) const
+{
+    const UWuwaTargetingComponent *Targeting = TargetingComponent.Get();
+
+    if (!IsValid(Targeting) || !Targeting->IsInitialized())
+    {
+        return Super::ComputeOrientToMovementRotation(
+            CurrentRotation,
+            DeltaTime,
+            DeltaRotation);
+    }
+
+    const FWuwaTargetContext TargetContext = Targeting->GetTargetContext();
+
+    if (TargetContext.Mode != EWuwaTargetingMode::Hard || !TargetContext.TargetActor.IsValid())
+    {
+        // Soft Lock 只提供攻击参考，不拥有角色朝向。
+        return Super::ComputeOrientToMovementRotation(
+            CurrentRotation,
+            DeltaTime,
+            DeltaRotation);
+    }
+
+    if (!IsValid(CharacterOwner))
+    {
+        return CurrentRotation;
+    }
+
+    const bool bMovementInputBlocked = IsValid(StateTagComponent.Get()) && StateTagComponent->HasTag(WuwaGameplayTags::Block_Input_Move, true);
+
+    const bool bUseHardTargetFacing = IsMovingOnGround() && !bMovementInputBlocked;
+
+    FVector DesiredFacingDirection = FVector::ZeroVector;
+
+    if (bUseHardTargetFacing)
+    {
+        // 地面普通 Locomotion 的角色朝向由 Hard Target Context 决定。
+        DesiredFacingDirection = TargetContext.TargetPoint - CharacterOwner->GetActorLocation();
+    }
+    else
+    {
+        // 空中或动作阻断期间不消费目标朝向，
+        // 改用 Movement/RMS 已经提交的真实水平速度。
+        DesiredFacingDirection = Velocity;
+    }
+
+    DesiredFacingDirection.Z = 0.f;
+
+    const bool bFiniteDirection = FMath::IsFinite(DesiredFacingDirection.X) && FMath::IsFinite(DesiredFacingDirection.Y);
+
+    if (!bFiniteDirection || DesiredFacingDirection.IsNearlyZero())
+    {
+        // 没有可靠平面方向时保持当前 Yaw，避免退化为错误的目标或移动朝向。
+        return CurrentRotation;
+    }
+
+    FRotator DesiredRotation = CurrentRotation;
+    DesiredRotation.Yaw = DesiredFacingDirection.Rotation().Yaw;
+
+    // 不在这里插值；UE PhysicsRotation 会使用 Profile 已应用的 RotationRate。
+    return DesiredRotation;
+
+    /*
+    FVector ToTarget = TargetContext.TargetPoint - CharacterOwner->GetActorLocation();
+
+    // 锁敌朝向只改变平面 Yaw，目标高度不能让胶囊产生 Pitch/Roll。
+    ToTarget.Z = 0.f;
+
+    const bool bFiniteDirection = FMath::IsFinite(ToTarget.X) && FMath::IsFinite(ToTarget.Y);
+
+    if (!bFiniteDirection || ToTarget.IsNearlyZero())
+    {
+        // Hard Context 尚未被周期校验清理时保持当前朝向，不能退化为面向移动方向。
+        return CurrentRotation;
+    }
+
+    FRotator DesiredRotation = CurrentRotation;
+    DesiredRotation.Yaw = ToTarget.Rotation().Yaw;
+
+    // 不在这里插值；UE PhysicsRotation 会使用 Profile 已应用的 RotationRate。
+    return DesiredRotation;
+    */
 }
 
 // 判断角色离开地面后是否仍处于允许普通跳跃的时间窗口。
@@ -503,6 +632,8 @@ void UWuwaCharacterMovementComponent::OnMovementModeChanged(const EMovementMode 
 
 void UWuwaCharacterMovementComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+    TargetingComponent.Reset();
+
     // 销毁前释放持有的冲刺标签
     if (bIsSprinting && StateTagComponent)
     {

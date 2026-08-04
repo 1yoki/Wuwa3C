@@ -4,11 +4,17 @@
 #include "Engine/LocalPlayer.h"
 #include "Core/WuwaStateTagComponent.h"
 #include "Camera/CameraComponent.h"
+#include "Camera/WuwaCameraModeComponent.h"
+#include "Camera/WuwaCameraProfile.h"
+#include "Camera/WuwaSpringArmComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Core/WuwaGameplayTags.h"
 
 #include "Input/WuwaInputBufferComponent.h"
 #include "Engine/World.h"
+
+#include "Targeting/WuwaTargetingComponent.h"
+#include "Targeting/WuwaTargetingProfile.h"
 
 #include "Movement/WuwaCharacterMovementComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -28,20 +34,30 @@
 // 使用自定义 Character Movement Component。
 AWuwaCharacter::AWuwaCharacter(const FObjectInitializer &ObjectInitializer) : Super(ObjectInitializer.SetDefaultSubobjectClass<UWuwaCharacterMovementComponent>(ACharacter::CharacterMovementComponentName))
 {
-	// 创建统一状态标签组件。
+	// 创建一个 State Tag 组件。
 	StateTagComponent = CreateDefaultSubobject<UWuwaStateTagComponent>(TEXT("StateTagComponent"));
 
-	// Character 负责创建并持有唯一输入缓存组件。
+	// 创建一个 Input Buffer 组件。
 	InputBufferComponent = CreateDefaultSubobject<UWuwaInputBufferComponent>(TEXT("InputBufferComponent"));
 
-	// Character 创建唯一 Action Router。
+	// 创建一个 Action Router 组件
 	ActionRouterComponent = CreateDefaultSubobject<UWuwaActionRouterComponent>(TEXT("ActionRouterComponent"));
 
-	// Character 创建唯一 Action Source 控制组件。
+	// 创建一个 Action Source 组件
 	ActionSourceComponent = CreateDefaultSubobject<UWuwaCharacterActionSourceComponent>(TEXT("ActionSourceComponent"));
-
+	
+	// 创建一个 Action Executor 组件
 	MovementActionExecutorComponent = CreateDefaultSubobject<UWuwaMovementActionExecutorComponent>(TEXT("MovementActionExecutorComponent"));
 
+	// 创建一个 Targeting 组件
+	TargetingComponent = CreateDefaultSubobject<UWuwaTargetingComponent>(TEXT("TargetingComponent"));
+
+	// 创建一个 Camera Mode 组件
+	CameraModeComponent = CreateDefaultSubobject<UWuwaCameraModeComponent>(TEXT("CameraModeComponent"));
+	
+	// 创建一个 Camera Boom 组件
+	
+	
 	// Set size for collision capsule
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
 
@@ -58,10 +74,14 @@ AWuwaCharacter::AWuwaCharacter(const FObjectInitializer &ObjectInitializer) : Su
 	GetCharacterMovement()->MinAnalogWalkSpeed = 20.f;
 
 	// Create a camera boom (pulls in towards the player if there is a collision)
-	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
+	CameraBoom = CreateDefaultSubobject<UWuwaSpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(RootComponent);
 	CameraBoom->TargetArmLength = 400.0f;
 	CameraBoom->bUsePawnControlRotation = true;
+
+	// Mode Component 将负责模式参数 Blend，SpringArm 不再叠加第二层 Lag
+	CameraBoom->bEnableCameraLag = false;
+	CameraBoom->bEnableCameraRotationLag = false;
 
 	// Create a follow camera
 	FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
@@ -87,6 +107,13 @@ double AWuwaCharacter::GetInputCommandTime() const
 void AWuwaCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+	
+	// 先检查是否有 Movement 参数配置
+	if (!MovementProfile)
+	{
+		UE_LOG(LogWuwa, Error, TEXT("未配置 MovementProfile。Owner=%s"), *GetNameSafe(this));
+		return;
+	}
 
 	UWuwaCharacterMovementComponent *Movement = GetWuwaMovementComponent();
 
@@ -96,25 +123,20 @@ void AWuwaCharacter::BeginPlay()
 		return;
 	}
 
-	// Character 负责连接同级组件。
+	// MovementComponent 连接 StateTagComponent
 	Movement->SetStateTagComponent(StateTagComponent);
-	// Character 显式连接 Router 与同级组件
+	
+	// Profile 配置仅在初始化时应用。
+	Movement->ApplyMovementProfile(MovementProfile);
+	
+	// 初始化 Action Router 并连接 Input Buffer、StateTagComponent
 	if (!ActionRouterComponent || !ActionRouterComponent->Initialize(InputBufferComponent, StateTagComponent))
 	{
 		UE_LOG(LogWuwa, Error, TEXT("Action Router 初始化失败。Owner=%s"), *GetNameSafe(this));
 		return;
 	}
 
-	if (!MovementProfile)
-	{
-		UE_LOG(LogWuwa, Error, TEXT("未配置 MovementProfile。Owner=%s"), *GetNameSafe(this));
-		return;
-	}
-
-	// Profile 仅在初始化时应用。
-	Movement->ApplyMovementProfile(MovementProfile);
-
-	// 连接 Action Source 与同级组件
+	// 初始化 Action Source 并连接 MovementComponent
 	if (!ActionSourceComponent || !ActionSourceComponent->Initialize(this, Movement) ||
 		!ActionRouterComponent->SetActionSource(ActionSourceComponent))
 	{
@@ -127,13 +149,52 @@ void AWuwaCharacter::BeginPlay()
 		return;
 	}
 
-	// Character 显式装配并注册唯一的 Movement Executor。
+	// 初始化 Action Executor 并连接 MovementComponent、Action Router
 	if (!MovementActionExecutorComponent || !MovementActionExecutorComponent->Initialize(this, Movement, ActionRouterComponent) || !ActionRouterComponent->RegisterExecutor(MovementActionExecutorComponent))
 	{
 		UE_LOG(
 			LogWuwa,
 			Error,
 			TEXT("Movement Action Executor 装配失败。Owner=%s"),
+			*GetNameSafe(this));
+
+		return;
+	}
+
+	// 初始化 TargetingComponent 并连接 StateTagComponent
+	if (!TargetingComponent || !TargetingProfile || !TargetingComponent->Initialize(this, StateTagComponent, TargetingProfile))
+	{
+		const EWuwaTargetingFailureReason FailureReason = TargetingComponent ? TargetingComponent->GetLastFailureReason() : EWuwaTargetingFailureReason::NotInitialized;
+
+		UE_LOG(
+			LogWuwa,
+			Error,
+			TEXT("Targeting Component 装配失败。Owner=%s, FailureReason=%s"),
+			*GetNameSafe(this),
+			*UEnum::GetValueAsString(FailureReason));
+
+		return;
+	}
+
+	// MovementComponent 连接 TargetingComponent，只读消费同 Owner 的 Target Context
+	if (!Movement->SetTargetingComponent(TargetingComponent))
+	{
+		UE_LOG(
+			LogWuwa,
+			Error,
+			TEXT("Movement Targeting Consumer 装配失败。Owner=%s"),
+			*GetNameSafe(this));
+
+		return;
+	}
+	
+	// 初始化 CameraModeComponent 并连接 TargetingComponent, 只读消费同 Owner 的 Target Context
+	if (!CameraModeComponent || !CameraProfile || !CameraBoom->ConfigureCollision(CameraProfile->ProbeSize, CameraProfile->ProbeChannel.GetValue(), CameraProfile->CollisionRecoveryInterpSpeed) || !CameraModeComponent->Initialize(CameraProfile, TargetingComponent, CameraBoom, FollowCamera))
+	{
+		UE_LOG(
+			LogWuwa,
+			Error,
+			TEXT("Camera Mode Component 装配失败。Owner=%s"),
 			*GetNameSafe(this));
 
 		return;
@@ -162,8 +223,14 @@ void AWuwaCharacter::SetLocomotionIntent(const FVector2D &MoveIntent)
 {
 	// 先保存 Controller 的真实输入；Block.Input.Move 只能阻止向下传递，不能清除快照
 	CurrentMoveIntent = MoveIntent.GetClampedToMaxSize(1.f);
-
+	
 	const bool bMoveBlocked = IsMoveInputBlocked();
+	
+	// Backstep 到达移动取消窗口后，真实 WASD 可以结束动作
+	if (UWuwaMovementActionExecutorComponent* Executor = MovementActionExecutorComponent.Get())
+	{
+		Executor->TryCancelBackstepByMoveIntent(CurrentMoveIntent);
+	}
 
 	const FVector2D EffectiveIntent = bMoveBlocked ? FVector2D::ZeroVector : CurrentMoveIntent;
 
@@ -183,6 +250,85 @@ void AWuwaCharacter::SetLocomotionIntent(const FVector2D &MoveIntent)
 
 bool AWuwaCharacter::SubmitInputCommand(const FWuwaInputCommand &Command)
 {
+	if (!Command.IsValid())
+	{
+		UE_LOG(
+			LogWuwa,
+			Warning,
+			TEXT("Character 拒绝无效 Input Command。Owner=%s, Input=%s, Sequence=%u"),
+			*GetNameSafe(this),
+			*Command.InputTag.ToString(),
+			Command.Sequence);
+
+		return false;
+	}
+
+	if (Command.InputTag == WuwaGameplayTags::Input_LockTarget)
+	{
+		// Lock 是非独占目标状态请求，不进入动作 FIFO，也不打断当前 Action。
+		if (!TargetingComponent || !TargetingComponent->IsInitialized())
+		{
+			UE_LOG(
+				LogWuwa,
+				Error,
+				TEXT("Lock Target Command 缺少有效 Targeting Component。Owner=%s"),
+				*GetNameSafe(this));
+
+			return false;
+		}
+
+		const FWuwaTargetingResult Result = TargetingComponent->ToggleHardLock();
+
+		// 若没候选目标，按锁定键恢复默认视角
+		if (!Result.bSucceeded && Result.FailureReason == EWuwaTargetingFailureReason::NoCandidate)
+		{
+			CameraModeComponent->RequestExplorationRecenter();
+			// 无候选等合法拒绝只在输入边沿记录，不产生每帧日志。
+			UE_LOG(
+				LogWuwa,
+				Verbose,
+				TEXT("Lock Target Command 被拒绝。Owner=%s, Reason=%s, Sequence=%u"),
+				*GetNameSafe(this),
+				*UEnum::GetValueAsString(Result.FailureReason),
+				Command.Sequence);
+		}
+
+		return Result.bSucceeded;
+	}
+
+	if (Command.InputTag == WuwaGameplayTags::Input_SwitchTarget)
+	{
+		// Switch 与 Lock 同属非独占目标状态请求，不进入动作 FIFO 或 Router。
+		if (!TargetingComponent || !TargetingComponent->IsInitialized())
+		{
+			UE_LOG(
+				LogWuwa,
+				Error,
+				TEXT("Switch Target Command 缺少有效 Targeting Component。Owner=%s"),
+				*GetNameSafe(this));
+
+			return false;
+		}
+
+		const FWuwaTargetingResult Result = TargetingComponent->SwitchHardTarget(Command.Direction.X);
+
+		if (!Result.bSucceeded)
+		{
+			// 无 Hard 或方向上无候选属于合法拒绝，只在输入边沿记录。
+			UE_LOG(
+				LogWuwa,
+				Verbose,
+				TEXT("Switch Target Command 被拒绝。Owner=%s, Direction=%.2f, Reason=%s, Sequence=%u"),
+				*GetNameSafe(this),
+				Command.Direction.X,
+				*UEnum::GetValueAsString(
+					Result.FailureReason),
+				Command.Sequence);
+		}
+
+		return Result.bSucceeded;
+	}
+
 	if (!InputBufferComponent)
 	{
 		UE_LOG(LogWuwa, Error, TEXT("未找到 InputBufferComponent。Owner=%s"), *GetNameSafe(this));
@@ -190,6 +336,7 @@ bool AWuwaCharacter::SubmitInputCommand(const FWuwaInputCommand &Command)
 	}
 
 	// Character 只负责转交
+	// 独占动作命令进入唯一 FIFO。
 	const bool bPushed = InputBufferComponent->Push(Command);
 
 	if (bPushed && ActionRouterComponent && ActionRouterComponent->IsInitialized())
@@ -199,38 +346,6 @@ bool AWuwaCharacter::SubmitInputCommand(const FWuwaInputCommand &Command)
 	}
 
 	return bPushed;
-}
-
-bool AWuwaCharacter::PeekInputCommand(FWuwaInputCommand &OutCommand)
-{
-	if (!InputBufferComponent)
-	{
-		OutCommand = FWuwaInputCommand();
-		return false;
-	}
-
-	return InputBufferComponent->Peek(GetInputCommandTime(), OutCommand);
-}
-
-bool AWuwaCharacter::ConsumeInputCommand(uint32 Sequence, FWuwaInputCommand &OutCommand)
-{
-	if (!InputBufferComponent)
-	{
-		OutCommand = FWuwaInputCommand();
-		return false;
-	}
-
-	return InputBufferComponent->Consume(GetInputCommandTime(), Sequence, OutCommand);
-}
-
-int32 AWuwaCharacter::ClearInputCommandsByTag(const FGameplayTag &InputTag)
-{
-	if (!InputBufferComponent)
-	{
-		return 0;
-	}
-
-	return InputBufferComponent->ClearByTag(InputTag);
 }
 
 TArray<FWuwaInputCommand> AWuwaCharacter::GetBufferedInputCommands()
@@ -270,11 +385,37 @@ void AWuwaCharacter::DoMove(float Right, float Forward)
 	}
 }
 
-void AWuwaCharacter::DoLook(float Yaw, float Pitch)
+void AWuwaCharacter::DoLook(const float Yaw, const float Pitch)
 {
+	/*
+	 * Exploration 由手动 Look 持有 ControlRotation；
+	 * LockOn 则由 CameraModeComponent 持有。
+	 */
+	
+	UWuwaCameraModeComponent* CameraMode = CameraModeComponent.Get();
+	
+	if (IsValid(CameraModeComponent.Get()) && CameraMode->HasViewRotationAuthority())
+	{
+		return;
+	}
+	
+	constexpr float LookInterruptThreshold = 0.001f;
+	
+	const bool bHasManualLookInput = FMath::Abs(Yaw) > LookInterruptThreshold ||
+		FMath::Abs(Pitch) > LookInterruptThreshold;
+	
+	if (!bHasManualLookInput)
+	{
+		return;
+	}
+	
+	if (IsValid(CameraMode))
+	{
+		CameraMode->CancelExplorationRecenter();
+	}
+
 	if (GetController() != nullptr)
 	{
-		// add yaw and pitch input to controller
 		AddControllerYawInput(Yaw);
 		AddControllerPitchInput(Pitch);
 	}

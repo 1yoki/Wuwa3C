@@ -10,7 +10,13 @@
 
 #include "WuwaCharacter.generated.h"
 
+class UWuwaCameraModeComponent;
+class UWuwaCameraProfile;
+class UWuwaTargetingComponent;
+class UWuwaTargetingProfile;
+
 class USpringArmComponent;
+class UWuwaSpringArmComponent;
 class UCameraComponent;
 class UInputAction;
 class UWuwaInputBufferComponent;
@@ -37,35 +43,51 @@ class AWuwaCharacter : public ACharacter
 
 	/** Camera boom positioning the camera behind the character */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
-	USpringArmComponent *CameraBoom;
+	TObjectPtr<UWuwaSpringArmComponent> CameraBoom;
 
 	/** Follow camera */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
 	UCameraComponent *FollowCamera;
 
-	// 角色所有活动 Gameplay Tags 的统一聚合组件。
+	// 所有活动 Gameplay Tags 的统一管理组件
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UWuwaStateTagComponent> StateTagComponent;
 
-	// 角色离散输入命令的唯一队列拥有者。
+	// 离散输入命令的队列拥有者
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UWuwaInputBufferComponent> InputBufferComponent;
 
-	// 角色动作准入和独占生命周期的唯一拥有者
+	// 把语义 Input Command 转换为角色 Action Request 的组件
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UWuwaCharacterActionSourceComponent> ActionSourceComponent;
+	
+	// Action Request 准入、仲裁、生命周期管理的组件
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UWuwaActionRouterComponent> ActionRouterComponent;
 
-	// 把语义 Input Command 转换为角色 Action Request 的组件。
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UWuwaCharacterActionSourceComponent> ActionSourceComponent;
-
-	// 执行获准的移动类 Action，并持有其运行资源
+	// 持有移动类 Action 运行资源，并执行获准的 Action 的组件
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UWuwaMovementActionExecutorComponent> MovementActionExecutorComponent;
+	
+	// 当前角色目标候选、软锁与硬锁状态的管理组件
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UWuwaTargetingComponent> TargetingComponent;
 
-	// 当前角色使用的移动配置。
+	// Camera Mode 选择并消费 Gameplay 事实的组件
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UWuwaCameraModeComponent> CameraModeComponent;
+
+	// 当前角色使用的移动参数配置
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UWuwaMovementProfile> MovementProfile;
+
+	// 当前角色使用的目标查询与评分配置
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Targeting", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UWuwaTargetingProfile> TargetingProfile;
+
+	// 当前角色使用的 Camera 参数配置
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Camera", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UWuwaCameraProfile> CameraProfile;
 
 public:
 	/** Constructor */
@@ -89,7 +111,7 @@ public:
 	virtual void DoJumpEnd();
 
 public:
-	/** 获取角色统一状态标签组件。 */
+	/** 获取当前角色拥有的组件 */
 	UFUNCTION(BlueprintPure, Category = "Wuwa|State")
 	UWuwaStateTagComponent *GetStateTagComponent() const
 	{
@@ -101,6 +123,21 @@ public:
 	{
 		return ActionRouterComponent;
 	}
+
+	UFUNCTION(BlueprintPure, Category = "Wuwa|Targeting")
+	UWuwaTargetingComponent *GetTargetingComponent() const
+	{
+		return TargetingComponent;
+	}
+
+	UFUNCTION(BlueprintPure, Category = "Wuwa|Camera")
+	UWuwaCameraModeComponent *GetCameraModeComponent() const
+	{
+		return CameraModeComponent;
+	}
+	
+	// 返回自定义移动组件，仅供 Gameplay C++ 使用。
+	UWuwaCharacterMovementComponent *GetWuwaMovementComponent() const;
 
 	// 查询当前 Router 是否正在执行任一二段跳动作
 	bool IsAirDoubleJumpActionActive() const;
@@ -117,20 +154,11 @@ public:
 	// 将离散输入命令提交给角色输入缓存。
 	bool SubmitInputCommand(const FWuwaInputCommand &Command);
 
-	// 查看当前队首有效命令，但不消费。
-	bool PeekInputCommand(FWuwaInputCommand &OutCommand);
-
-	// 只消费 Sequence 匹配的队首命令。
-	bool ConsumeInputCommand(uint32 Sequence, FWuwaInputCommand &OutCommand);
-
-	// 清除指定输入标签的全部缓存命令。
-	int32 ClearInputCommandsByTag(const FGameplayTag &InputTag);
-
-	// 返回清理过期项后的命令副本。
+	// 返回清理过期项后的命令副本 Debug
 	TArray<FWuwaInputCommand> GetBufferedInputCommands();
 
 private:
-	// 所有缓存查询使用同一个 World 时间基准。
+	// GetBufferedInputCommands() 查询使用 World 时间基准。
 	double GetInputCommandTime() const;
 
 	// 查询持续移动输入是否被当前动作阻断。
@@ -141,20 +169,10 @@ private:
 	FVector2D CurrentMoveIntent = FVector2D::ZeroVector;
 
 public:
-	/** Returns CameraBoom subobject **/
-	FORCEINLINE class USpringArmComponent *GetCameraBoom() const { return CameraBoom; }
-
-	/** Returns FollowCamera subobject **/
-	FORCEINLINE class UCameraComponent *GetFollowCamera() const { return FollowCamera; }
-
-protected:
-	virtual void BeginPlay() override;
-
-public:
-	// 返回自定义移动组件，仅供 Gameplay C++ 使用。
-	UWuwaCharacterMovementComponent *GetWuwaMovementComponent() const;
-
-	// 返回动画和 Debug 使用的只读状态。
+	
+	// 返回动画和 Debug 使用的当前角色运动状态快照。
 	UFUNCTION(BlueprintPure, Category = "Wuwa|Movement")
 	FWuwaLocomotionSnapshot GetLocomotionSnapshot() const;
+	
+	virtual void BeginPlay() override;
 };

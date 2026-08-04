@@ -1,8 +1,25 @@
 .vs/
+.idea/
+.vscode/
 Binaries/
 DerivedDataCache/
+.ddc/
 Intermediate/
 Saved/
+Artifacts/
+Build/Windows/FileOpenOrder/
+
+# Local recordings and machine-specific assistant/tool configuration.
+video/
+.codex/
+.agents/
+.mcp.json
+Agent.md
+Spec.md
+
+# Plugin build outputs; plugin source/config/content remain versioned.
+Plugins/*/Binaries/
+Plugins/*/Intermediate/
 
 *.VC.db
 *.opensdf
