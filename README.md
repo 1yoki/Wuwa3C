@@ -4,7 +4,7 @@
 
 Wuwa 是一个聚焦角色、镜头与操作（Character、Camera、Controls）的第三人称动作技术 Demo。项目通过自定义 Gameplay 框架串联移动、动作仲裁、目标锁定、镜头、自由钩锁、Gameplay Ability System（GAS）战斗和网络同步，用于展示可配置、可预测且职责清晰的动作玩法实现。
 
-> 当前版本：`v0.1.0`（Source-only）。Content 与可执行 Demo 暂未公开分发。
+> 当前版本：`v0.1.0`（Source-only）。
 
 ## 目录
 
@@ -181,9 +181,8 @@ Wuwa 的核心思路是把“玩家想做什么”与“系统如何执行”分
 
 ### 发布状态
 
-`v0.1.0` 仅发布源码，不提供公开 Content 包或 Windows Demo。当前仓库可以用于阅读、审查和编译 C++ 模块，但不能单独还原完整关卡与视觉表现。
+`v0.1.0` 仅发布源码，不提供公开 Content 包或 Windows Demo。当前仓库可以用于阅读、审查和编译 C++ 模块。
 
-Content 与 Demo 将在第三方资源授权复核完成后按独立 Release 资产发布；请勿将其他版本或非公开资源与本源码混用。
 
 ### 从源码构建
 
@@ -226,22 +225,14 @@ Content 与 Demo 将在第三方资源授权复核完成后按独立 Release 资
 
 ## 发布文件
 
-`v0.1.0` 是 Source-only 版本，不附带二进制 Release 资产。未来资源授权门禁解除后使用以下命名约定：
-
-| 文件                                    | 用途                      |
-| --------------------------------------- | ------------------------- |
-| `Wuwa-Content-<tag>.zip`                | 与源码配套的 Content 资源 |
-| `Wuwa-Win64-Demo-<tag>.zip`             | 可直接运行的 Windows Demo |
-| `Wuwa-Release-<tag>-SHA256SUMS.txt`     | Release 文件完整性校验    |
-
-不要混用不同版本的源码、Content 或 Demo。
+`v0.1.0` 是 Source-only 版本，不附带二进制 Release 资产。
 
 ## 项目边界
 
 - 当前目标是展示第三人称动作 3C 与 Gameplay 架构，不覆盖完整关卡、剧情、AI、存档或商业化系统。
 - LAN 使用 `OnlineSubsystemNull`，不包含互联网账号、平台大厅或线上匹配服务。
 - 自动化测试、GameMemAdvisor 诊断代码和一次性 Editor Library 不属于公开源码发布范围。
-- `v0.1.0` 不发布 Content 和可执行 Demo，源码仓库本身不能还原完整视觉内容。
+- `v0.1.0` 不发布 Content 和可执行 Demo。
 
 ## 许可证与资产
 
