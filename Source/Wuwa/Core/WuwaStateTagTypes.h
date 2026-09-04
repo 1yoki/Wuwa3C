@@ -11,29 +11,26 @@
 USTRUCT(BlueprintType)
 struct WUWA_API FWuwaStateTagHandle
 {
-    GENERATED_BODY()
+	GENERATED_BODY()
 
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "State Tags")
-    FGuid Id;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "State Tags")
+	FGuid Id;
 
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "State Tags")
-    FGameplayTag Tag;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "State Tags")
+	FGameplayTag Tag;
 
-    FWuwaStateTagHandle() = default;
+	FWuwaStateTagHandle() = default;
 
-    FWuwaStateTagHandle(const FGuid &InId, const FGameplayTag &InTag)
-        : Id(InId), Tag(InTag)
-    {
-    }
+	FWuwaStateTagHandle(const FGuid& InId, const FGameplayTag& InTag) : Id(InId), Tag(InTag) {}
 
-    bool IsValid() const
-    {
-        return Id.IsValid() && Tag.IsValid();
-    }
+	bool IsValid() const
+	{
+		return Id.IsValid() && Tag.IsValid();
+	}
 
-    void Reset()
-    {
-        Id.Invalidate();
-        Tag = FGameplayTag();
-    }
+	void Reset()
+	{
+		Id.Invalidate();
+		Tag = FGameplayTag();
+	}
 };
