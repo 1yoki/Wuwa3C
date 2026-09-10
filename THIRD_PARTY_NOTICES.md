@@ -21,7 +21,3 @@
 Wuwa 3C uses Unreal® Engine. Unreal® is a trademark or registered trademark of Epic Games, Inc. in the United States of America and elsewhere.
 
 Unreal® Engine, Copyright 1998 – 2026, Epic Games, Inc. All rights reserved.
-
-## 后续 Content 与 Demo
-
-Content 与 Demo 不属于 `v0.1.0` 的公开交付物。未来若单独发布，其资产许可、归属声明和分发范围将随对应 Release 独立列出；本仓库的 MIT License 不会自动扩展到这些文件。
